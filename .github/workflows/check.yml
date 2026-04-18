@@ -1,0 +1,20 @@
+name: checks
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+      - "feature/**"
+  pull_request:
+    branches:
+      - main
+      - develop
+  workflow_dispatch:
+
+jobs:
+  check:
+    uses: ./.github/workflows/test-spm-codecov.yml
+    secrets: inherit
+    with:
+      test_bundle: EasyLinkSwiftSDKPackageTests

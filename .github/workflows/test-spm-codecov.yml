@@ -28,7 +28,8 @@ jobs:
         run: xcrun llvm-cov export -format="lcov" .build/debug/${{ inputs.test_bundle }}.xctest/Contents/MacOS/${{ inputs.test_bundle }} -instr-profile .build/debug/codecov/default.profdata > coverage_report.lcov
 
       - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v4
+        uses: codecov/codecov-action@v5
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: ./coverage_report.lcov
+          slug: NSStudent/EasyLinkSwiftSDK

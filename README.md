@@ -6,8 +6,8 @@
 [![Swift Package Manager](https://img.shields.io/badge/SwiftPM-compatible-brightgreen.svg)](https://www.swift.org/package-manager/)
 [![Platforms](https://img.shields.io/badge/platforms-iOS%2016%20%7C%20macOS%2013-lightgrey.svg)](Package.swift)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![Swift Package Index Swift Versions](https://img.shields.io/endpoint?url=https://swiftpackageindex.com/api/packages/NSStudent/EasyLinkSwiftSDK/badge?type=swift-versions)](https://swiftpackageindex.com/NSStudent/EasyLinkSwiftSDK)
-[![Swift Package Index Platforms](https://img.shields.io/endpoint?url=https://swiftpackageindex.com/api/packages/NSStudent/EasyLinkSwiftSDK/badge?type=platforms)](https://swiftpackageindex.com/NSStudent/EasyLinkSwiftSDK)
+[![](https://img.shields.io/endpoint?url=https%3A%2F%2Fswiftpackageindex.com%2Fapi%2Fpackages%2FNSStudent%2FEasyLinkSwiftSDK%2Fbadge%3Ftype%3Dswift-versions)](https://swiftpackageindex.com/NSStudent/EasyLinkSwiftSDK)
+[![](https://img.shields.io/endpoint?url=https%3A%2F%2Fswiftpackageindex.com%2Fapi%2Fpackages%2FNSStudent%2FEasyLinkSwiftSDK%2Fbadge%3Ftype%3Dplatforms)](https://swiftpackageindex.com/NSStudent/EasyLinkSwiftSDK)
 
 `EasyLinkSwiftSDK` is a native Swift package for discovering and communicating with [Chessnut](https://www.chessnutech.com) electronic chessboards over Bluetooth Low Energy.
 

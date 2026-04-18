@@ -1,21 +1,24 @@
 import Foundation
 @preconcurrency import CoreBluetooth
 
+// CoreBluetooth delegate callbacks are delivered on `queue`; all mutable BLE state below is accessed by scheduling onto that queue.
 public final class CoreBluetoothEasyLinkTransport: NSObject, EasyLinkTransport, @unchecked Sendable {
   public let notifications: AsyncStream<EasyLinkNotification>
 
   private let profile: BoardProfile
+  private let deviceID: UUID?
   private let queue = DispatchQueue(label: "EasyLinkSwiftSDK.CoreBluetooth")
   private let notificationContinuation: AsyncStream<EasyLinkNotification>.Continuation
 
   private var centralManager: CBCentralManager?
   private var peripheral: CBPeripheral?
   private var commandCharacteristic: CBCharacteristic?
-  private var connectContinuation: CheckedContinuation<Void, Error>?
+  private var connectContinuations: [UUID: CheckedContinuation<Void, Error>] = [:]
   private var pendingWriteContinuations: [CheckedContinuation<Void, Error>] = []
 
-  public init(profile: BoardProfile) {
+  public init(profile: BoardProfile, deviceID: UUID? = nil) {
     self.profile = profile
+    self.deviceID = deviceID
 
     var continuation: AsyncStream<EasyLinkNotification>.Continuation!
     self.notifications = AsyncStream<EasyLinkNotification> { streamContinuation in
@@ -31,20 +34,27 @@ public final class CoreBluetoothEasyLinkTransport: NSObject, EasyLinkTransport, 
   }
 
   public func connect() async throws {
-    try await withCheckedThrowingContinuation { continuation in
-      queue.async {
-        if self.peripheral?.state == .connected, self.commandCharacteristic != nil {
-          continuation.resume()
-          return
-        }
+    let id = UUID()
+    try await withTaskCancellationHandler {
+      try await withCheckedThrowingContinuation { continuation in
+        queue.async {
+          if self.peripheral?.state == .connected, self.commandCharacteristic != nil {
+            continuation.resume()
+            return
+          }
 
-        self.connectContinuation = continuation
+          self.connectContinuations[id] = continuation
 
-        if self.centralManager == nil {
-          self.centralManager = CBCentralManager(delegate: self, queue: self.queue)
-        } else {
-          self.startScanIfReady()
+          if self.centralManager == nil {
+            self.centralManager = CBCentralManager(delegate: self, queue: self.queue)
+          } else {
+            self.startScanIfReady()
+          }
         }
+      }
+    } onCancel: {
+      self.queue.async {
+        self.cancelConnect(id)
       }
     }
   }
@@ -57,6 +67,8 @@ public final class CoreBluetoothEasyLinkTransport: NSObject, EasyLinkTransport, 
         }
         self.commandCharacteristic = nil
         self.peripheral = nil
+        self.finishConnect(.failure(EasyLinkError.disconnected))
+        self.finishPendingWrites(.failure(EasyLinkError.disconnected))
         self.notificationContinuation.yield(.disconnected)
         continuation.resume()
       }
@@ -94,17 +106,49 @@ public final class CoreBluetoothEasyLinkTransport: NSObject, EasyLinkTransport, 
     )
   }
 
+  private func connect(_ peripheral: CBPeripheral, using central: CBCentralManager) {
+    central.stopScan()
+    self.peripheral = peripheral
+    peripheral.delegate = self
+    central.connect(peripheral)
+  }
+
   private func finishConnect(_ result: Result<Void, Error>) {
-    guard let continuation = connectContinuation else {
+    guard !connectContinuations.isEmpty else {
       return
     }
-    connectContinuation = nil
+
+    let continuations = connectContinuations.values
+    connectContinuations.removeAll()
 
     switch result {
     case .success:
-      continuation.resume()
+      continuations.forEach { $0.resume() }
     case let .failure(error):
-      continuation.resume(throwing: error)
+      continuations.forEach { $0.resume(throwing: error) }
+    }
+  }
+
+  private func cancelConnect(_ id: UUID) {
+    guard let continuation = connectContinuations.removeValue(forKey: id) else {
+      return
+    }
+    continuation.resume(throwing: CancellationError())
+  }
+
+  private func finishPendingWrites(_ result: Result<Void, Error>) {
+    guard !pendingWriteContinuations.isEmpty else {
+      return
+    }
+
+    let continuations = pendingWriteContinuations
+    pendingWriteContinuations.removeAll()
+
+    switch result {
+    case .success:
+      continuations.forEach { $0.resume() }
+    case let .failure(error):
+      continuations.forEach { $0.resume(throwing: error) }
     }
   }
 
@@ -155,15 +199,13 @@ extension CoreBluetoothEasyLinkTransport: CBCentralManagerDelegate {
     rssi RSSI: NSNumber
   ) {
     guard let name = peripheral.name ?? advertisementData[CBAdvertisementDataLocalNameKey] as? String,
-          profile.matchesPeripheralName(name)
+          profile.matchesPeripheralName(name),
+          deviceID == nil || peripheral.identifier == deviceID
     else {
       return
     }
 
-    central.stopScan()
-    self.peripheral = peripheral
-    peripheral.delegate = self
-    central.connect(peripheral)
+    connect(peripheral, using: central)
   }
 
   public func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeripheral) {
@@ -178,6 +220,7 @@ extension CoreBluetoothEasyLinkTransport: CBCentralManagerDelegate {
     didFailToConnect peripheral: CBPeripheral,
     error: Error?
   ) {
+    self.peripheral = nil
     finishConnect(.failure(error ?? EasyLinkError.connectionFailed("CoreBluetooth failed to connect.")))
   }
 
@@ -187,6 +230,9 @@ extension CoreBluetoothEasyLinkTransport: CBCentralManagerDelegate {
     error: Error?
   ) {
     commandCharacteristic = nil
+    self.peripheral = nil
+    finishConnect(.failure(error ?? EasyLinkError.disconnected))
+    finishPendingWrites(.failure(error ?? EasyLinkError.disconnected))
     notificationContinuation.yield(.disconnected)
   }
 }

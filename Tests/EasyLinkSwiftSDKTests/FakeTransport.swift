@@ -1,11 +1,10 @@
 import EasyLinkSwiftSDK
 import Foundation
 
-final class FakeTransport: EasyLinkTransport, @unchecked Sendable {
-  let notifications: AsyncStream<EasyLinkNotification>
+actor FakeTransport: EasyLinkTransport {
+  nonisolated let notifications: AsyncStream<EasyLinkNotification>
 
-  private let continuation: AsyncStream<EasyLinkNotification>.Continuation
-  private let lock = NSLock()
+  private nonisolated let continuation: AsyncStream<EasyLinkNotification>.Continuation
   private var responseHandler: (([UInt8]) -> [UInt8]?)?
   private(set) var writes: [[UInt8]] = []
   private(set) var didConnect = false
@@ -22,37 +21,23 @@ final class FakeTransport: EasyLinkTransport, @unchecked Sendable {
   }
 
   func connect() async throws {
-    lock.withLock {
-      didConnect = true
-    }
+    didConnect = true
   }
 
   func disconnect() async {
-    lock.withLock {
-      didDisconnect = true
-    }
+    didDisconnect = true
     continuation.yield(.disconnected)
   }
 
   func write(_ command: [UInt8]) async throws {
-    let response = lock.withLock {
-      writes.append(command)
-      return responseHandler?(command)
-    }
+    writes.append(command)
+    let response = responseHandler?(command)
     if let response {
       continuation.yield(.response(response))
     }
   }
 
-  func send(_ notification: EasyLinkNotification) {
+  nonisolated func send(_ notification: EasyLinkNotification) {
     continuation.yield(notification)
-  }
-}
-
-private extension NSLock {
-  func withLock<T>(_ operation: () throws -> T) rethrows -> T {
-    lock()
-    defer { unlock() }
-    return try operation()
   }
 }

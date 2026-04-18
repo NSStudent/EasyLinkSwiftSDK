@@ -1,5 +1,6 @@
 import Foundation
 
+/// Encoder and decoder for Chessnut BLE protocol packets.
 public enum EasyLinkCodec {
   private static let pieceByCode: [Character?] = [
     nil, "q", "k", "b", "p", "n", "R", "P", "r", "B", "N", "Q", "K"
@@ -15,6 +16,7 @@ public enum EasyLinkCodec {
     "p", "p", "p", "p", "p", "p", "p", "p", "r", "r", "n", "n", "b", "b", "q", "q", "k"
   ]
 
+  /// Decodes a FEN placement string from a raw FEN notification packet.
   public static func decodePlacement(from packet: [UInt8]) throws -> String {
     guard packet.count >= 34 else {
       throw EasyLinkError.invalidPacket("FEN packets must contain at least 34 bytes.")
@@ -57,6 +59,7 @@ public enum EasyLinkCodec {
     return fen
   }
 
+  /// Encodes a FEN placement string into the 32-byte board payload used by the protocol.
   public static func encodePlacement(_ fen: String) throws -> [UInt8] {
     let placement = fen.split(separator: " ").first.map(String.init) ?? fen
     let ranks = placement.split(separator: "/", omittingEmptySubsequences: false)
@@ -95,6 +98,7 @@ public enum EasyLinkCodec {
     return boardData
   }
 
+  /// Encodes the classic board LED command.
   public static func classicLEDCommand(_ board: LEDBoard) -> [UInt8] {
     var command: [UInt8] = [0x0A, 0x08]
     for row in 0..<8 {
@@ -107,6 +111,7 @@ public enum EasyLinkCodec {
     return command
   }
 
+  /// Encodes the Chessnut Move color LED command.
   public static func moveLEDCommand(_ board: LEDBoard) -> [UInt8] {
     var ledData = Array(repeating: UInt8(0), count: 32)
     for row in 0..<8 {
@@ -122,14 +127,17 @@ public enum EasyLinkCodec {
     return [0x43, 0x20] + ledData
   }
 
+  /// Encodes a Chessnut Move auto-move command.
   public static func moveAutoMoveCommand(fen: String, force: Bool) throws -> [UInt8] {
     [0x42, 0x21] + (try encodePlacement(fen)) + [force ? 0 : 1]
   }
 
+  /// Encodes a Chessnut Move stop auto-move command.
   public static func moveStopAutoMoveCommand() -> [UInt8] {
     [0x42, 0x21] + Array(repeating: UInt8(0), count: 33)
   }
 
+  /// Parses a battery response for the selected board profile.
   public static func parseBatteryStatus(profile: BoardProfile, response: [UInt8]) throws -> BatteryStatus {
     switch profile {
     case .classic:
@@ -147,6 +155,7 @@ public enum EasyLinkCodec {
     }
   }
 
+  /// Parses Chessnut Move piece status records.
   public static func parseMovePieceStatus(response: [UInt8]) throws -> [PieceStatus] {
     guard response.count >= 3, response[0] == 0x41, response[1] == 0x89, response[2] == 0x0B else {
       throw EasyLinkError.invalidPacket("Invalid Chessnut Move piece-status response.")

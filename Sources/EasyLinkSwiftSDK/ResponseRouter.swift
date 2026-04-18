@@ -2,14 +2,20 @@ import Foundation
 
 actor ResponseRouter {
   typealias Predicate = @Sendable ([UInt8]) -> Bool
+  private static let defaultMaximumBufferedResponses = 32
 
   private struct PendingResponse {
     var predicate: Predicate
     var continuation: CheckedContinuation<[UInt8], Error>
   }
 
+  private let maximumBufferedResponses: Int
   private var pendingResponses: [UUID: PendingResponse] = [:]
   private var bufferedResponses: [[UInt8]] = []
+
+  init(maximumBufferedResponses: Int = defaultMaximumBufferedResponses) {
+    self.maximumBufferedResponses = maximumBufferedResponses
+  }
 
   func wait(
     matching predicate: @escaping Predicate,
@@ -35,6 +41,9 @@ actor ResponseRouter {
   func receive(_ response: [UInt8]) {
     guard let match = pendingResponses.first(where: { $0.value.predicate(response) }) else {
       bufferedResponses.append(response)
+      if bufferedResponses.count > maximumBufferedResponses {
+        bufferedResponses.removeFirst(bufferedResponses.count - maximumBufferedResponses)
+      }
       return
     }
     pendingResponses.removeValue(forKey: match.key)

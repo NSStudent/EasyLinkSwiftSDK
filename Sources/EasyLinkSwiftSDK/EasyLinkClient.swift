@@ -1,22 +1,40 @@
 import Foundation
 
-public final class EasyLinkClient: @unchecked Sendable {
-  public let profile: BoardProfile
-  public let fenUpdates: AsyncStream<String>
+/// High-level async client for a Chessnut board.
+public actor EasyLinkClient {
+  /// The board profile used to encode commands and parse responses.
+  public nonisolated let profile: BoardProfile
+
+  /// Realtime FEN placement updates emitted by the board.
+  public nonisolated let fenUpdates: AsyncStream<String>
 
   private let transport: EasyLinkTransport
   private let responseRouter = ResponseRouter()
-  private let fenContinuation: AsyncStream<String>.Continuation
-  private let taskLock = NSLock()
+  private nonisolated let fenContinuation: AsyncStream<String>.Continuation
   private var notificationTask: Task<Void, Never>?
 
-  public convenience init(profile: BoardProfile) {
+  /// Creates a client that connects to the first discovered board matching a profile.
+  public init(profile: BoardProfile) {
     self.init(
       profile: profile,
       transport: CoreBluetoothEasyLinkTransport(profile: profile)
     )
   }
 
+  /// Creates a client for a specific discovered device.
+  public init(device: EasyLinkDevice) {
+    self.init(profile: device.profile, deviceID: device.id)
+  }
+
+  /// Creates a client that connects to a specific CoreBluetooth peripheral identifier.
+  public init(profile: BoardProfile, deviceID: UUID) {
+    self.init(
+      profile: profile,
+      transport: CoreBluetoothEasyLinkTransport(profile: profile, deviceID: deviceID)
+    )
+  }
+
+  /// Creates a client with an injected transport.
   public init(profile: BoardProfile, transport: EasyLinkTransport) {
     self.profile = profile
     self.transport = transport
@@ -33,20 +51,24 @@ public final class EasyLinkClient: @unchecked Sendable {
     fenContinuation.finish()
   }
 
+  /// Connects to the board and starts processing notifications.
   public func connect() async throws {
     try await transport.connect()
     startNotificationTask()
   }
 
+  /// Disconnects from the board and stops processing notifications.
   public func disconnect() async {
     stopNotificationTask()
     await transport.disconnect()
   }
 
+  /// Enables realtime FEN notifications on the board.
   public func enableRealtimeUpdates() async throws {
     try await transport.write(ProtocolConstants.enableRealtimeMode)
   }
 
+  /// Sets LEDs using the command format for the active profile.
   public func setLEDs(_ board: LEDBoard) async throws {
     let command: [UInt8]
     switch profile {
@@ -58,6 +80,7 @@ public final class EasyLinkClient: @unchecked Sendable {
     try await transport.write(command)
   }
 
+  /// Requests the board battery status.
   public func batteryStatus(timeout: Duration = .seconds(3)) async throws -> BatteryStatus {
     try await transport.write(profile.batteryCommand)
     let profile = self.profile
@@ -75,6 +98,7 @@ public final class EasyLinkClient: @unchecked Sendable {
     return try EasyLinkCodec.parseBatteryStatus(profile: profile, response: response)
   }
 
+  /// Starts a Chessnut Move auto-move operation from a FEN placement.
   public func setAutoMove(fen: String, force: Bool = true) async throws {
     guard profile == .move else {
       throw EasyLinkError.unsupportedCommand(profile)
@@ -82,6 +106,7 @@ public final class EasyLinkClient: @unchecked Sendable {
     try await transport.write(EasyLinkCodec.moveAutoMoveCommand(fen: fen, force: force))
   }
 
+  /// Stops the current Chessnut Move auto-move operation.
   public func stopAutoMove() async throws {
     guard profile == .move else {
       throw EasyLinkError.unsupportedCommand(profile)
@@ -89,6 +114,7 @@ public final class EasyLinkClient: @unchecked Sendable {
     try await transport.write(EasyLinkCodec.moveStopAutoMoveCommand())
   }
 
+  /// Requests Chessnut Move piece status records.
   public func pieceStatus(timeout: Duration = .seconds(3)) async throws -> [PieceStatus] {
     guard profile == .move else {
       throw EasyLinkError.unsupportedCommand(profile)
@@ -105,9 +131,6 @@ public final class EasyLinkClient: @unchecked Sendable {
   }
 
   private func startNotificationTask() {
-    taskLock.lock()
-    defer { taskLock.unlock() }
-
     guard notificationTask == nil else {
       return
     }
@@ -135,9 +158,6 @@ public final class EasyLinkClient: @unchecked Sendable {
   }
 
   private func stopNotificationTask() {
-    taskLock.lock()
-    defer { taskLock.unlock() }
-
     notificationTask?.cancel()
     notificationTask = nil
   }

@@ -21,11 +21,13 @@
 | --- | --- |
 | `Package.swift` | Define el paquete SPM, plataformas, producto de libreria y target de tests. |
 | `README.md` | Resumen corto de perfiles, UUIDs, comandos y ejemplo basico. |
+| `Sources/EasyLinkSwiftSDK/EasyLinkSwiftSDK.docc` | Catalogo DocC con guias navegables y documentacion de API. |
 | `Sources/EasyLinkSwiftSDK/EasyLinkClient.swift` | Fachada publica principal para conectar, enviar comandos y consumir actualizaciones FEN. |
+| `Sources/EasyLinkSwiftSDK/EasyLinkScanner.swift` | API publica de discovery con CoreBluetooth que emite dispositivos Bluetooth reales. |
 | `Sources/EasyLinkSwiftSDK/CoreBluetoothEasyLinkTransport.swift` | Implementacion BLE real usando `CBCentralManager` y `CBPeripheralDelegate`. |
 | `Sources/EasyLinkSwiftSDK/EasyLinkTransport.swift` | Protocolo de transporte inyectable para poder probar o sustituir CoreBluetooth. |
 | `Sources/EasyLinkSwiftSDK/EasyLinkCodec.swift` | Codificador y decodificador del protocolo de bytes de Chessnut. |
-| `Sources/EasyLinkSwiftSDK/Models.swift` | Modelos publicos: perfil, colores LED, tablero LED, bateria y estado de piezas. |
+| `Sources/EasyLinkSwiftSDK/Models.swift` | Modelos publicos: dispositivo descubierto, perfil, colores LED, tablero LED, bateria y estado de piezas. |
 | `Sources/EasyLinkSwiftSDK/ResponseRouter.swift` | Actor interno que empareja respuestas BLE con llamadas pendientes. |
 | `Sources/EasyLinkSwiftSDK/EasyLinkNotification.swift` | Eventos internos del transporte: FEN, respuesta y desconexion. |
 | `Sources/EasyLinkSwiftSDK/EasyLinkError.swift` | Errores publicos de la libreria. |
@@ -51,8 +53,12 @@ Despues declara la dependencia en el target que la use:
 ```swift
 import EasyLinkSwiftSDK
 
-let client = EasyLinkClient(profile: .move)
+var iterator = EasyLinkScanner.scan(profile: .move).makeAsyncIterator()
+guard let device = await iterator.next() else {
+  return
+}
 
+let client = EasyLinkClient(device: device)
 try await client.connect()
 try await client.enableRealtimeUpdates()
 
@@ -82,7 +88,7 @@ La libreria esta organizada en tres capas:
 2. Transporte BLE o transporte inyectado: `EasyLinkTransport` y `CoreBluetoothEasyLinkTransport`.
 3. Protocolo de bytes: `EasyLinkCodec`, `ProtocolConstants` y `ResponseRouter`.
 
-`EasyLinkClient` no habla directamente con CoreBluetooth. Envia comandos a cualquier objeto que implemente `EasyLinkTransport`, lo que permite probar la libreria con `FakeTransport` o crear transportes alternativos.
+`EasyLinkClient` no habla directamente con CoreBluetooth. Envia comandos a cualquier objeto que implemente `EasyLinkTransport`, lo que permite probar la libreria con `FakeTransport` o crear transportes alternativos. El cliente es un actor, asi que su estado mutable de tareas queda protegido por aislamiento de actor en vez de locks.
 
 ```mermaid
 sequenceDiagram
@@ -202,11 +208,13 @@ Propiedades:
 Inicializadores:
 
 ```swift
-public convenience init(profile: BoardProfile)
+public init(profile: BoardProfile)
+public init(device: EasyLinkDevice)
+public init(profile: BoardProfile, deviceID: UUID)
 public init(profile: BoardProfile, transport: EasyLinkTransport)
 ```
 
-El inicializador de conveniencia usa `CoreBluetoothEasyLinkTransport`. El inicializador con `transport` permite inyectar un transporte custom para tests, simuladores o integraciones alternativas.
+El inicializador que solo recibe el perfil usa `CoreBluetoothEasyLinkTransport` y conecta al primer periferico descubierto que coincide con el perfil. Usa `init(device:)` o `init(profile:deviceID:)` cuando el usuario haya elegido un dispositivo concreto desde `EasyLinkScanner`. El inicializador con `transport` permite inyectar un transporte custom para tests, simuladores o integraciones alternativas.
 
 Metodos:
 
@@ -220,6 +228,18 @@ Metodos:
 | `setAutoMove(fen:force:)` | Solo Chessnut Move. Envia una posicion para auto-move. |
 | `stopAutoMove()` | Solo Chessnut Move. Detiene auto-move. |
 | `pieceStatus(timeout:)` | Solo Chessnut Move. Devuelve estado de las 34 piezas. |
+
+### `EasyLinkScanner`
+
+`EasyLinkScanner.scan(profile:)` devuelve `AsyncStream<EasyLinkDevice>`. Cada dispositivo contiene el identificador real del periferico CoreBluetooth, el nombre anunciado y el perfil detectado:
+
+```swift
+for await device in EasyLinkScanner.scan(profile: .move) {
+  print(device.id, device.name)
+}
+```
+
+Manten viva la tarea de escaneo mientras la UI descubre dispositivos. Cancela la tarea cuando se cierre el selector.
 
 ### Flujo de actualizaciones FEN
 
@@ -373,6 +393,18 @@ public enum BoardProfile: Sendable, Equatable {
 
 Selecciona el protocolo de comandos y las reglas de deteccion del periferico.
 
+### `EasyLinkDevice`
+
+```swift
+public struct EasyLinkDevice: Sendable, Identifiable, Equatable {
+  public let id: UUID
+  public let name: String
+  public let profile: BoardProfile
+}
+```
+
+Representa un periferico Bluetooth real descubierto. Usa `id` para reconectar al periferico seleccionado y `name` para la UI.
+
 ### `LEDColor`
 
 ```swift
@@ -503,7 +535,7 @@ Responsabilidades principales:
 - Esperar a que Bluetooth este `poweredOn`.
 - Escanear perifericos BLE.
 - Filtrar perifericos por nombre segun `BoardProfile`.
-- Conectar al periferico.
+- Conectar al primer periferico compatible, o al identificador de un `EasyLinkDevice` seleccionado si se proporciona.
 - Descubrir servicios FEN y operaciones.
 - Descubrir caracteristicas de comando, respuesta y notificacion FEN.
 - Activar notificaciones BLE.
@@ -523,7 +555,7 @@ Eventos emitidos:
 La abstraccion `EasyLinkTransport` permite sustituir CoreBluetooth:
 
 ```swift
-public protocol EasyLinkTransport: AnyObject {
+public protocol EasyLinkTransport: AnyObject, Sendable {
   var notifications: AsyncStream<EasyLinkNotification> { get }
 
   func connect() async throws
@@ -531,6 +563,8 @@ public protocol EasyLinkTransport: AnyObject {
   func write(_ command: [UInt8]) async throws
 }
 ```
+
+Las implementaciones deben ser `Sendable`, porque el actor del cliente almacena y usa el transporte cruzando limites de concurrencia.
 
 Esto es util para:
 
@@ -594,6 +628,7 @@ La suite actual cubre:
 - Seleccion de codificacion LED segun perfil.
 - Rechazo de comandos Move-only en classic.
 - Consulta y parseo de `pieceStatus`.
+- Buffer acotado de respuestas no consumidas en `ResponseRouter`.
 
 ## Ejemplos de uso
 
@@ -661,31 +696,28 @@ for piece in statuses {
 
 - `connect()` no recibe timeout explicito. Si el entorno BLE no produce eventos esperados, el consumidor depende del comportamiento de CoreBluetooth y del estado del manager.
 - El escaneo usa `withServices: nil` y filtra despues por nombre. Esto maximiza descubrimiento, pero puede ver mas perifericos de los necesarios.
+- `EasyLinkScanner.scan(profile:)` emite identificadores reales de perifericos CoreBluetooth y nombres anunciados para seleccion de dispositivo en la UI.
 - `disconnect()` emite `.disconnected` y limpia referencias internas del transporte.
 - Los comandos se escriben con respuesta BLE; la continuacion de escritura se resuelve en `didWriteValueFor`.
 - El cliente crea una tarea interna para consumir `transport.notifications`.
 - Las respuestas de comando se emparejan por predicado, no por identificador de correlacion formal.
+- `ResponseRouter` guarda como maximo 32 respuestas sin consumir; las mas antiguas se expulsan primero.
 - `LEDBoard` valida dimensiones al inicializar, pero el subscript asume indices validos.
 
 ## Posibles mejoras de la libreria
 
 1. Anadir timeout configurable a `connect()` para evitar esperas indefinidas durante escaneo, conexion o descubrimiento de servicios.
-2. Exponer una API de escaneo y seleccion manual de periferico, util cuando hay varios tableros Chessnut cerca.
-3. Filtrar el escaneo por servicios BLE cuando sea viable, reduciendo ruido y consumo durante discovery.
-4. Completar todas las continuaciones de escritura pendientes si ocurre una desconexion o error BLE antes de `didWriteValueFor`.
-5. Proteger mejor llamadas concurrentes a `connect()`, porque actualmente existe una sola `connectContinuation` interna.
-6. Convertir parte del estado de `CoreBluetoothEasyLinkTransport` a un actor o aislarlo con una estrategia de concurrencia mas estricta para reducir el uso de `@unchecked Sendable`.
-7. Exponer errores de paquetes FEN invalidos en vez de ignorarlos silenciosamente con `try?`.
-8. Limitar o limpiar el buffer de `ResponseRouter` para evitar crecimiento indefinido si llegan respuestas que nadie consume.
-9. Anadir modelos de casilla/rank/file tipados para evitar trabajar con indices `Int` crudos en `LEDBoard`.
-10. Validar bounds en el subscript de `LEDBoard` o proporcionar metodos seguros de lectura/escritura por casilla.
-11. Ampliar `LEDColor` si el hardware soporta mas colores o intensidades.
-12. Ofrecer helpers para convertir entre coordenadas de ajedrez (`e4`) e indices `rankIndex/fileIndex`.
-13. Permitir construir un FEN completo anadiendo turno, enroques, captura al paso y contadores cuando la app lo necesite.
-14. Documentar publicamente el sistema de coordenadas usado por FEN, LEDs y estado de piezas.
-15. Anadir tests de timeout, desconexion, respuestas fuera de orden y multiples requests simultaneas.
-16. Anadir tests de integracion opcionales con hardware real detras de una bandera o scheme separado.
-17. Exponer un modo de logging o tracing de paquetes BLE para diagnostico.
-18. Anadir DocC (`.docc`) para generar documentacion navegable desde Xcode.
-19. Publicar ejemplos completos para iOS/macOS con permisos Bluetooth y ciclo de vida de UI.
-20. Separar API publica de codec de bajo nivel si se quiere mantener una superficie publica mas pequena y estable.
+2. Filtrar el escaneo por servicios BLE cuando sea viable, reduciendo ruido y consumo durante discovery.
+3. Exponer errores de paquetes FEN invalidos en vez de ignorarlos silenciosamente con `try?`.
+4. Seguir reforzando el limite de aislamiento de CoreBluetooth donde las APIs de Apple lo permitan. El transporte mantiene el estado de delegates de CoreBluetooth en una cola serial y documenta ese invariante; `EasyLinkClient` y los transportes de tests usan aislamiento de actor.
+5. Anadir modelos de casilla/rank/file tipados para evitar trabajar con indices `Int` crudos en `LEDBoard`.
+6. Validar bounds en el subscript de `LEDBoard` o proporcionar metodos seguros de lectura/escritura por casilla.
+7. Ampliar `LEDColor` si el hardware soporta mas colores o intensidades.
+8. Ofrecer helpers para convertir entre coordenadas de ajedrez (`e4`) e indices `rankIndex/fileIndex`.
+9. Permitir construir un FEN completo anadiendo turno, enroques, captura al paso y contadores cuando la app lo necesite.
+10. Documentar publicamente el sistema de coordenadas usado por FEN, LEDs y estado de piezas.
+11. Anadir tests de timeout, desconexion, respuestas fuera de orden y multiples requests simultaneas.
+12. Anadir tests de integracion opcionales con hardware real detras de una bandera o scheme separado.
+13. Exponer un modo de logging o tracing de paquetes BLE para diagnostico.
+14. Publicar ejemplos completos para iOS/macOS con permisos Bluetooth y ciclo de vida de UI.
+15. Separar API publica de codec de bajo nivel si se quiere mantener una superficie publica mas pequena y estable.

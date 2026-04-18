@@ -82,7 +82,7 @@ La libreria esta organizada en tres capas:
 2. Transporte BLE o transporte inyectado: `EasyLinkTransport` y `CoreBluetoothEasyLinkTransport`.
 3. Protocolo de bytes: `EasyLinkCodec`, `ProtocolConstants` y `ResponseRouter`.
 
-`EasyLinkClient` no habla directamente con CoreBluetooth. Envia comandos a cualquier objeto que implemente `EasyLinkTransport`, lo que permite probar la libreria con `FakeTransport` o crear transportes alternativos.
+`EasyLinkClient` no habla directamente con CoreBluetooth. Envia comandos a cualquier objeto que implemente `EasyLinkTransport`, lo que permite probar la libreria con `FakeTransport` o crear transportes alternativos. El cliente es un actor, asi que su estado mutable de tareas queda protegido por aislamiento de actor en vez de locks.
 
 ```mermaid
 sequenceDiagram
@@ -202,11 +202,11 @@ Propiedades:
 Inicializadores:
 
 ```swift
-public convenience init(profile: BoardProfile)
+public init(profile: BoardProfile)
 public init(profile: BoardProfile, transport: EasyLinkTransport)
 ```
 
-El inicializador de conveniencia usa `CoreBluetoothEasyLinkTransport`. El inicializador con `transport` permite inyectar un transporte custom para tests, simuladores o integraciones alternativas.
+El inicializador que solo recibe el perfil usa `CoreBluetoothEasyLinkTransport`. El inicializador con `transport` permite inyectar un transporte custom para tests, simuladores o integraciones alternativas.
 
 Metodos:
 
@@ -523,7 +523,7 @@ Eventos emitidos:
 La abstraccion `EasyLinkTransport` permite sustituir CoreBluetooth:
 
 ```swift
-public protocol EasyLinkTransport: AnyObject {
+public protocol EasyLinkTransport: AnyObject, Sendable {
   var notifications: AsyncStream<EasyLinkNotification> { get }
 
   func connect() async throws
@@ -531,6 +531,8 @@ public protocol EasyLinkTransport: AnyObject {
   func write(_ command: [UInt8]) async throws
 }
 ```
+
+Las implementaciones deben ser `Sendable`, porque el actor del cliente almacena y usa el transporte cruzando limites de concurrencia.
 
 Esto es util para:
 
@@ -594,6 +596,7 @@ La suite actual cubre:
 - Seleccion de codificacion LED segun perfil.
 - Rechazo de comandos Move-only en classic.
 - Consulta y parseo de `pieceStatus`.
+- Buffer acotado de respuestas no consumidas en `ResponseRouter`.
 
 ## Ejemplos de uso
 
@@ -665,6 +668,7 @@ for piece in statuses {
 - Los comandos se escriben con respuesta BLE; la continuacion de escritura se resuelve en `didWriteValueFor`.
 - El cliente crea una tarea interna para consumir `transport.notifications`.
 - Las respuestas de comando se emparejan por predicado, no por identificador de correlacion formal.
+- `ResponseRouter` guarda como maximo 32 respuestas sin consumir; las mas antiguas se expulsan primero.
 - `LEDBoard` valida dimensiones al inicializar, pero el subscript asume indices validos.
 
 ## Posibles mejoras de la libreria
@@ -672,20 +676,17 @@ for piece in statuses {
 1. Anadir timeout configurable a `connect()` para evitar esperas indefinidas durante escaneo, conexion o descubrimiento de servicios.
 2. Exponer una API de escaneo y seleccion manual de periferico, util cuando hay varios tableros Chessnut cerca.
 3. Filtrar el escaneo por servicios BLE cuando sea viable, reduciendo ruido y consumo durante discovery.
-4. Completar todas las continuaciones de escritura pendientes si ocurre una desconexion o error BLE antes de `didWriteValueFor`.
-5. Proteger mejor llamadas concurrentes a `connect()`, porque actualmente existe una sola `connectContinuation` interna.
-6. Convertir parte del estado de `CoreBluetoothEasyLinkTransport` a un actor o aislarlo con una estrategia de concurrencia mas estricta para reducir el uso de `@unchecked Sendable`.
-7. Exponer errores de paquetes FEN invalidos en vez de ignorarlos silenciosamente con `try?`.
-8. Limitar o limpiar el buffer de `ResponseRouter` para evitar crecimiento indefinido si llegan respuestas que nadie consume.
-9. Anadir modelos de casilla/rank/file tipados para evitar trabajar con indices `Int` crudos en `LEDBoard`.
-10. Validar bounds en el subscript de `LEDBoard` o proporcionar metodos seguros de lectura/escritura por casilla.
-11. Ampliar `LEDColor` si el hardware soporta mas colores o intensidades.
-12. Ofrecer helpers para convertir entre coordenadas de ajedrez (`e4`) e indices `rankIndex/fileIndex`.
-13. Permitir construir un FEN completo anadiendo turno, enroques, captura al paso y contadores cuando la app lo necesite.
-14. Documentar publicamente el sistema de coordenadas usado por FEN, LEDs y estado de piezas.
-15. Anadir tests de timeout, desconexion, respuestas fuera de orden y multiples requests simultaneas.
-16. Anadir tests de integracion opcionales con hardware real detras de una bandera o scheme separado.
-17. Exponer un modo de logging o tracing de paquetes BLE para diagnostico.
-18. Anadir DocC (`.docc`) para generar documentacion navegable desde Xcode.
-19. Publicar ejemplos completos para iOS/macOS con permisos Bluetooth y ciclo de vida de UI.
-20. Separar API publica de codec de bajo nivel si se quiere mantener una superficie publica mas pequena y estable.
+4. Exponer errores de paquetes FEN invalidos en vez de ignorarlos silenciosamente con `try?`.
+5. Seguir reforzando el limite de aislamiento de CoreBluetooth donde las APIs de Apple lo permitan. El transporte mantiene el estado de delegates de CoreBluetooth en una cola serial y documenta ese invariante; `EasyLinkClient` y los transportes de tests usan aislamiento de actor.
+6. Anadir modelos de casilla/rank/file tipados para evitar trabajar con indices `Int` crudos en `LEDBoard`.
+7. Validar bounds en el subscript de `LEDBoard` o proporcionar metodos seguros de lectura/escritura por casilla.
+8. Ampliar `LEDColor` si el hardware soporta mas colores o intensidades.
+9. Ofrecer helpers para convertir entre coordenadas de ajedrez (`e4`) e indices `rankIndex/fileIndex`.
+10. Permitir construir un FEN completo anadiendo turno, enroques, captura al paso y contadores cuando la app lo necesite.
+11. Documentar publicamente el sistema de coordenadas usado por FEN, LEDs y estado de piezas.
+12. Anadir tests de timeout, desconexion, respuestas fuera de orden y multiples requests simultaneas.
+13. Anadir tests de integracion opcionales con hardware real detras de una bandera o scheme separado.
+14. Exponer un modo de logging o tracing de paquetes BLE para diagnostico.
+15. Anadir DocC (`.docc`) para generar documentacion navegable desde Xcode.
+16. Publicar ejemplos completos para iOS/macOS con permisos Bluetooth y ciclo de vida de UI.
+17. Separar API publica de codec de bajo nivel si se quiere mantener una superficie publica mas pequena y estable.

@@ -1,16 +1,15 @@
 import Foundation
 
-public final class EasyLinkClient: @unchecked Sendable {
-  public let profile: BoardProfile
-  public let fenUpdates: AsyncStream<String>
+public actor EasyLinkClient {
+  public nonisolated let profile: BoardProfile
+  public nonisolated let fenUpdates: AsyncStream<String>
 
   private let transport: EasyLinkTransport
   private let responseRouter = ResponseRouter()
-  private let fenContinuation: AsyncStream<String>.Continuation
-  private let taskLock = NSLock()
+  private nonisolated let fenContinuation: AsyncStream<String>.Continuation
   private var notificationTask: Task<Void, Never>?
 
-  public convenience init(profile: BoardProfile) {
+  public init(profile: BoardProfile) {
     self.init(
       profile: profile,
       transport: CoreBluetoothEasyLinkTransport(profile: profile)
@@ -105,9 +104,6 @@ public final class EasyLinkClient: @unchecked Sendable {
   }
 
   private func startNotificationTask() {
-    taskLock.lock()
-    defer { taskLock.unlock() }
-
     guard notificationTask == nil else {
       return
     }
@@ -135,9 +131,6 @@ public final class EasyLinkClient: @unchecked Sendable {
   }
 
   private func stopNotificationTask() {
-    taskLock.lock()
-    defer { taskLock.unlock() }
-
     notificationTask?.cancel()
     notificationTask = nil
   }

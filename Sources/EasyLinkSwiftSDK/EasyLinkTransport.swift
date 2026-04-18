@@ -1,6 +1,6 @@
 import Foundation
 
-public protocol EasyLinkTransport: AnyObject {
+public protocol EasyLinkTransport: AnyObject, Sendable {
   var notifications: AsyncStream<EasyLinkNotification> { get }
 
   func connect() async throws

@@ -82,7 +82,7 @@ The library is organized into three layers:
 2. BLE or injected transport: `EasyLinkTransport` and `CoreBluetoothEasyLinkTransport`.
 3. Byte protocol: `EasyLinkCodec`, `ProtocolConstants`, and `ResponseRouter`.
 
-`EasyLinkClient` does not talk directly to CoreBluetooth. It sends commands to any object implementing `EasyLinkTransport`, which makes the library testable with `FakeTransport` and allows alternative transports.
+`EasyLinkClient` does not talk directly to CoreBluetooth. It sends commands to any object implementing `EasyLinkTransport`, which makes the library testable with `FakeTransport` and allows alternative transports. The client is an actor, so its mutable task state is protected by actor isolation instead of locks.
 
 ```mermaid
 sequenceDiagram
@@ -202,11 +202,11 @@ Properties:
 Initializers:
 
 ```swift
-public convenience init(profile: BoardProfile)
+public init(profile: BoardProfile)
 public init(profile: BoardProfile, transport: EasyLinkTransport)
 ```
 
-The convenience initializer uses `CoreBluetoothEasyLinkTransport`. The initializer that accepts a `transport` allows injecting a custom transport for tests, simulators, or alternative integrations.
+The profile-only initializer uses `CoreBluetoothEasyLinkTransport`. The initializer that accepts a `transport` allows injecting a custom transport for tests, simulators, or alternative integrations.
 
 Methods:
 
@@ -523,7 +523,7 @@ Emitted events:
 The `EasyLinkTransport` abstraction allows replacing CoreBluetooth:
 
 ```swift
-public protocol EasyLinkTransport: AnyObject {
+public protocol EasyLinkTransport: AnyObject, Sendable {
   var notifications: AsyncStream<EasyLinkNotification> { get }
 
   func connect() async throws
@@ -531,6 +531,8 @@ public protocol EasyLinkTransport: AnyObject {
   func write(_ command: [UInt8]) async throws
 }
 ```
+
+Implementations must be `Sendable`, because the client actor stores and uses the transport across concurrency boundaries.
 
 This is useful for:
 
@@ -594,6 +596,7 @@ The current test suite covers:
 - LED encoding selection by profile.
 - Rejection of Move-only commands on classic.
 - `pieceStatus` query and parsing.
+- Bounded buffering of unmatched responses in `ResponseRouter`.
 
 ## Usage Examples
 
@@ -665,6 +668,7 @@ for piece in statuses {
 - Commands are written with BLE response; the write continuation resolves in `didWriteValueFor`.
 - The client creates an internal task to consume `transport.notifications`.
 - Command responses are matched by predicate, not by a formal correlation identifier.
+- `ResponseRouter` stores at most 32 unmatched responses; older unmatched responses are evicted first.
 - `LEDBoard` validates dimensions at initialization, but its subscript assumes valid indices.
 
 ## Possible Library Improvements
@@ -672,20 +676,17 @@ for piece in statuses {
 1. Add a configurable timeout to `connect()` to avoid indefinite waits during scanning, connection, or service discovery.
 2. Expose a scan and manual peripheral selection API, useful when multiple Chessnut boards are nearby.
 3. Filter scans by BLE services when viable, reducing discovery noise and power usage.
-4. Complete all pending write continuations if a disconnection or BLE error occurs before `didWriteValueFor`.
-5. Better protect concurrent calls to `connect()`, because there is currently a single internal `connectContinuation`.
-6. Move part of `CoreBluetoothEasyLinkTransport` state to an actor, or isolate it with a stricter concurrency strategy, to reduce reliance on `@unchecked Sendable`.
-7. Expose invalid FEN packet errors instead of silently ignoring them with `try?`.
-8. Limit or clean the `ResponseRouter` buffer to avoid unbounded growth when unconsumed responses arrive.
-9. Add typed square/rank/file models to avoid raw `Int` indices in `LEDBoard`.
-10. Validate bounds in the `LEDBoard` subscript or provide safe read/write methods by square.
-11. Expand `LEDColor` if the hardware supports more colors or brightness levels.
-12. Provide helpers to convert between chess coordinates (`e4`) and `rankIndex/fileIndex`.
-13. Allow building a full FEN by adding side to move, castling rights, en passant target, and counters when the app needs them.
-14. Publicly document the coordinate system used by FEN, LEDs, and piece status.
-15. Add tests for timeout, disconnection, out-of-order responses, and multiple simultaneous requests.
-16. Add optional integration tests with real hardware behind a flag or separate scheme.
-17. Expose a packet logging or tracing mode for BLE diagnostics.
-18. Add DocC (`.docc`) to generate browsable documentation from Xcode.
-19. Publish complete iOS/macOS examples with Bluetooth permissions and UI lifecycle handling.
-20. Separate the public high-level API from the low-level codec if a smaller and more stable public surface is desired.
+4. Expose invalid FEN packet errors instead of silently ignoring them with `try?`.
+5. Continue tightening the CoreBluetooth isolation boundary where Apple APIs allow it. The transport currently keeps CoreBluetooth delegate state on a serial CoreBluetooth queue and documents that invariant; `EasyLinkClient` and test transports use actor isolation.
+6. Add typed square/rank/file models to avoid raw `Int` indices in `LEDBoard`.
+7. Validate bounds in the `LEDBoard` subscript or provide safe read/write methods by square.
+8. Expand `LEDColor` if the hardware supports more colors or brightness levels.
+9. Provide helpers to convert between chess coordinates (`e4`) and `rankIndex/fileIndex`.
+10. Allow building a full FEN by adding side to move, castling rights, en passant target, and counters when the app needs them.
+11. Publicly document the coordinate system used by FEN, LEDs, and piece status.
+12. Add tests for timeout, disconnection, out-of-order responses, and multiple simultaneous requests.
+13. Add optional integration tests with real hardware behind a flag or separate scheme.
+14. Expose a packet logging or tracing mode for BLE diagnostics.
+15. Add DocC (`.docc`) to generate browsable documentation from Xcode.
+16. Publish complete iOS/macOS examples with Bluetooth permissions and UI lifecycle handling.
+17. Separate the public high-level API from the low-level codec if a smaller and more stable public surface is desired.

@@ -20,5 +20,6 @@ let package = Package(
       name: "EasyLinkSwiftSDKTests",
       dependencies: ["EasyLinkSwiftSDK"]
     )
-  ]
+  ],
+  swiftLanguageModes: [.v6]
 )

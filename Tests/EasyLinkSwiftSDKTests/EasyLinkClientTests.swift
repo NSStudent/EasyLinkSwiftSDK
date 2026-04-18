@@ -14,8 +14,9 @@ final class EasyLinkClientTests: XCTestCase {
     transport.send(.fen(try fenPacket(placement: placement)))
 
     let fen = await iterator.next()
+    let writes = await transport.writes
     XCTAssertEqual(fen, placement)
-    XCTAssertEqual(transport.writes, [[0x21, 0x01, 0x00]])
+    XCTAssertEqual(writes, [[0x21, 0x01, 0x00]])
   }
 
   func testBatteryStatusWritesProfileCommandAndAwaitsResponse() async throws {
@@ -26,9 +27,10 @@ final class EasyLinkClientTests: XCTestCase {
 
     try await client.connect()
     let status = try await client.batteryStatus()
+    let writes = await transport.writes
 
     XCTAssertEqual(status, BatteryStatus(percentage: 44, isCharging: false))
-    XCTAssertEqual(transport.writes, [[0x41, 0x01, 0x0C]])
+    XCTAssertEqual(writes, [[0x41, 0x01, 0x0C]])
   }
 
   func testSetLEDsUsesSelectedProfileEncoding() async throws {
@@ -39,14 +41,16 @@ final class EasyLinkClientTests: XCTestCase {
     let classic = EasyLinkClient(profile: .classic, transport: classicTransport)
     try await classic.connect()
     try await classic.setLEDs(board)
-    XCTAssertEqual(classicTransport.writes, [[0x0A, 0x08, 0x01, 0, 0, 0, 0, 0, 0, 0]])
+    let classicWrites = await classicTransport.writes
+    XCTAssertEqual(classicWrites, [[0x0A, 0x08, 0x01, 0, 0, 0, 0, 0, 0, 0]])
 
     let moveTransport = FakeTransport()
     let move = EasyLinkClient(profile: .move, transport: moveTransport)
     try await move.connect()
     try await move.setLEDs(board)
-    XCTAssertEqual(moveTransport.writes.first?.count, 34)
-    XCTAssertEqual(moveTransport.writes.first?[2], 0x03)
+    let moveWrites = await moveTransport.writes
+    XCTAssertEqual(moveWrites.first?.count, 34)
+    XCTAssertEqual(moveWrites.first?[2], 0x03)
   }
 
   func testClassicProfileRejectsMoveOnlyCommands() async throws {
@@ -78,7 +82,8 @@ final class EasyLinkClientTests: XCTestCase {
     XCTAssertEqual(statuses.count, 34)
     XCTAssertEqual(statuses[0].piece, "P")
     XCTAssertEqual(statuses[33].piece, "k")
-    XCTAssertEqual(transport.writes, [[0x41, 0x01, 0x0B]])
+    let writes = await transport.writes
+    XCTAssertEqual(writes, [[0x41, 0x01, 0x0B]])
   }
 
   private func fenPacket(placement: String) throws -> [UInt8] {

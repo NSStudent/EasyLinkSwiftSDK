@@ -2,6 +2,18 @@ import EasyLinkSwiftSDK
 import XCTest
 
 final class EasyLinkClientTests: XCTestCase {
+  func testClientCanBeCreatedForDiscoveredDevice() {
+    let device = EasyLinkDevice(
+      id: UUID(uuidString: "00000000-0000-0000-0000-000000000001")!,
+      name: "Chessnut Move",
+      profile: .move
+    )
+
+    let client = EasyLinkClient(device: device)
+
+    XCTAssertEqual(client.profile, .move)
+  }
+
   func testConnectStartsRealtimeAndYieldsFenUpdates() async throws {
     let transport = FakeTransport()
     let client = EasyLinkClient(profile: .move, transport: transport)

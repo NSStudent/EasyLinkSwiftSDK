@@ -22,10 +22,11 @@
 | `Package.swift` | Defines the SPM package, platforms, library product, and test target. |
 | `README.md` | Short summary of profiles, UUIDs, commands, and basic usage. |
 | `Sources/EasyLinkSwiftSDK/EasyLinkClient.swift` | Main public facade for connecting, sending commands, and consuming FEN updates. |
+| `Sources/EasyLinkSwiftSDK/EasyLinkScanner.swift` | Public CoreBluetooth discovery API that emits real Bluetooth devices. |
 | `Sources/EasyLinkSwiftSDK/CoreBluetoothEasyLinkTransport.swift` | Real BLE implementation using `CBCentralManager` and `CBPeripheralDelegate`. |
 | `Sources/EasyLinkSwiftSDK/EasyLinkTransport.swift` | Injectable transport protocol for testing or replacing CoreBluetooth. |
 | `Sources/EasyLinkSwiftSDK/EasyLinkCodec.swift` | Encoder and decoder for Chessnut protocol bytes. |
-| `Sources/EasyLinkSwiftSDK/Models.swift` | Public models: profile, LED colors, LED board, battery, and piece status. |
+| `Sources/EasyLinkSwiftSDK/Models.swift` | Public models: discovered device, profile, LED colors, LED board, battery, and piece status. |
 | `Sources/EasyLinkSwiftSDK/ResponseRouter.swift` | Internal actor that matches BLE responses with pending calls. |
 | `Sources/EasyLinkSwiftSDK/EasyLinkNotification.swift` | Transport events: FEN, response, and disconnection. |
 | `Sources/EasyLinkSwiftSDK/EasyLinkError.swift` | Public library errors. |
@@ -51,8 +52,12 @@ Then declare the dependency in the target that uses it:
 ```swift
 import EasyLinkSwiftSDK
 
-let client = EasyLinkClient(profile: .move)
+var iterator = EasyLinkScanner.scan(profile: .move).makeAsyncIterator()
+guard let device = await iterator.next() else {
+  return
+}
 
+let client = EasyLinkClient(device: device)
 try await client.connect()
 try await client.enableRealtimeUpdates()
 
@@ -203,10 +208,12 @@ Initializers:
 
 ```swift
 public init(profile: BoardProfile)
+public init(device: EasyLinkDevice)
+public init(profile: BoardProfile, deviceID: UUID)
 public init(profile: BoardProfile, transport: EasyLinkTransport)
 ```
 
-The profile-only initializer uses `CoreBluetoothEasyLinkTransport`. The initializer that accepts a `transport` allows injecting a custom transport for tests, simulators, or alternative integrations.
+The profile-only initializer uses `CoreBluetoothEasyLinkTransport` and connects to the first discovered peripheral matching the profile. Use `init(device:)` or `init(profile:deviceID:)` when the user selected a concrete device from `EasyLinkScanner`. The initializer that accepts a `transport` allows injecting a custom transport for tests, simulators, or alternative integrations.
 
 Methods:
 
@@ -220,6 +227,18 @@ Methods:
 | `setAutoMove(fen:force:)` | Chessnut Move only. Sends a position for auto-move. |
 | `stopAutoMove()` | Chessnut Move only. Stops auto-move. |
 | `pieceStatus(timeout:)` | Chessnut Move only. Returns the status of 34 pieces. |
+
+### `EasyLinkScanner`
+
+`EasyLinkScanner.scan(profile:)` returns `AsyncStream<EasyLinkDevice>`. Each device contains the real CoreBluetooth peripheral identifier, advertised name, and matched board profile:
+
+```swift
+for await device in EasyLinkScanner.scan(profile: .move) {
+  print(device.id, device.name)
+}
+```
+
+Keep the scan task alive while the UI is discovering devices. Cancel the task when the device picker closes.
 
 ### FEN Update Flow
 
@@ -373,6 +392,18 @@ public enum BoardProfile: Sendable, Equatable {
 
 Selects the command protocol and peripheral detection rules.
 
+### `EasyLinkDevice`
+
+```swift
+public struct EasyLinkDevice: Sendable, Identifiable, Equatable {
+  public let id: UUID
+  public let name: String
+  public let profile: BoardProfile
+}
+```
+
+Represents a real discovered Bluetooth peripheral. Use `id` to reconnect to the selected peripheral and `name` for the UI.
+
 ### `LEDColor`
 
 ```swift
@@ -503,7 +534,7 @@ Main responsibilities:
 - Wait for Bluetooth to be `poweredOn`.
 - Scan BLE peripherals.
 - Filter peripherals by name according to `BoardProfile`.
-- Connect to the peripheral.
+- Connect to the first matching peripheral, or to a selected `EasyLinkDevice` identifier when provided.
 - Discover FEN and operation services.
 - Discover command, response, and FEN notification characteristics.
 - Enable BLE notifications.
@@ -664,6 +695,7 @@ for piece in statuses {
 
 - `connect()` does not receive an explicit timeout. If the BLE environment does not produce the expected events, the consumer depends on CoreBluetooth behavior and manager state.
 - Scanning uses `withServices: nil` and then filters by name. This maximizes discovery, but it can observe more peripherals than necessary.
+- `EasyLinkScanner.scan(profile:)` emits real CoreBluetooth peripheral identifiers and advertised names for user-facing device selection.
 - `disconnect()` emits `.disconnected` and clears internal transport references.
 - Commands are written with BLE response; the write continuation resolves in `didWriteValueFor`.
 - The client creates an internal task to consume `transport.notifications`.
@@ -674,19 +706,18 @@ for piece in statuses {
 ## Possible Library Improvements
 
 1. Add a configurable timeout to `connect()` to avoid indefinite waits during scanning, connection, or service discovery.
-2. Expose a scan and manual peripheral selection API, useful when multiple Chessnut boards are nearby.
-3. Filter scans by BLE services when viable, reducing discovery noise and power usage.
-4. Expose invalid FEN packet errors instead of silently ignoring them with `try?`.
-5. Continue tightening the CoreBluetooth isolation boundary where Apple APIs allow it. The transport currently keeps CoreBluetooth delegate state on a serial CoreBluetooth queue and documents that invariant; `EasyLinkClient` and test transports use actor isolation.
-6. Add typed square/rank/file models to avoid raw `Int` indices in `LEDBoard`.
-7. Validate bounds in the `LEDBoard` subscript or provide safe read/write methods by square.
-8. Expand `LEDColor` if the hardware supports more colors or brightness levels.
-9. Provide helpers to convert between chess coordinates (`e4`) and `rankIndex/fileIndex`.
-10. Allow building a full FEN by adding side to move, castling rights, en passant target, and counters when the app needs them.
-11. Publicly document the coordinate system used by FEN, LEDs, and piece status.
-12. Add tests for timeout, disconnection, out-of-order responses, and multiple simultaneous requests.
-13. Add optional integration tests with real hardware behind a flag or separate scheme.
-14. Expose a packet logging or tracing mode for BLE diagnostics.
-15. Add DocC (`.docc`) to generate browsable documentation from Xcode.
-16. Publish complete iOS/macOS examples with Bluetooth permissions and UI lifecycle handling.
-17. Separate the public high-level API from the low-level codec if a smaller and more stable public surface is desired.
+2. Filter scans by BLE services when viable, reducing discovery noise and power usage.
+3. Expose invalid FEN packet errors instead of silently ignoring them with `try?`.
+4. Continue tightening the CoreBluetooth isolation boundary where Apple APIs allow it. The transport currently keeps CoreBluetooth delegate state on a serial CoreBluetooth queue and documents that invariant; `EasyLinkClient` and test transports use actor isolation.
+5. Add typed square/rank/file models to avoid raw `Int` indices in `LEDBoard`.
+6. Validate bounds in the `LEDBoard` subscript or provide safe read/write methods by square.
+7. Expand `LEDColor` if the hardware supports more colors or brightness levels.
+8. Provide helpers to convert between chess coordinates (`e4`) and `rankIndex/fileIndex`.
+9. Allow building a full FEN by adding side to move, castling rights, en passant target, and counters when the app needs them.
+10. Publicly document the coordinate system used by FEN, LEDs, and piece status.
+11. Add tests for timeout, disconnection, out-of-order responses, and multiple simultaneous requests.
+12. Add optional integration tests with real hardware behind a flag or separate scheme.
+13. Expose a packet logging or tracing mode for BLE diagnostics.
+14. Add DocC (`.docc`) to generate browsable documentation from Xcode.
+15. Publish complete iOS/macOS examples with Bluetooth permissions and UI lifecycle handling.
+16. Separate the public high-level API from the low-level codec if a smaller and more stable public surface is desired.

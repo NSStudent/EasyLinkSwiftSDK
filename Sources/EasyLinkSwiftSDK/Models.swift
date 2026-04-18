@@ -5,6 +5,18 @@ public enum BoardProfile: Sendable, Equatable {
   case move
 }
 
+public struct EasyLinkDevice: Sendable, Identifiable, Equatable {
+  public let id: UUID
+  public let name: String
+  public let profile: BoardProfile
+
+  public init(id: UUID, name: String, profile: BoardProfile) {
+    self.id = id
+    self.name = name
+    self.profile = profile
+  }
+}
+
 public enum LEDColor: UInt8, Sendable, Equatable {
   case off = 0
   case red = 1

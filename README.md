@@ -22,8 +22,12 @@ Both profiles use:
 ```swift
 import EasyLinkSwiftSDK
 
-let client = EasyLinkClient(profile: .move)
+var iterator = EasyLinkScanner.scan(profile: .move).makeAsyncIterator()
+guard let device = await iterator.next() else {
+  return
+}
 
+let client = EasyLinkClient(device: device)
 try await client.connect()
 try await client.enableRealtimeUpdates()
 

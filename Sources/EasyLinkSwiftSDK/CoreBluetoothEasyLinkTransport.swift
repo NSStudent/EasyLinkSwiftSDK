@@ -6,6 +6,7 @@ public final class CoreBluetoothEasyLinkTransport: NSObject, EasyLinkTransport, 
   public let notifications: AsyncStream<EasyLinkNotification>
 
   private let profile: BoardProfile
+  private let deviceID: UUID?
   private let queue = DispatchQueue(label: "EasyLinkSwiftSDK.CoreBluetooth")
   private let notificationContinuation: AsyncStream<EasyLinkNotification>.Continuation
 
@@ -15,8 +16,9 @@ public final class CoreBluetoothEasyLinkTransport: NSObject, EasyLinkTransport, 
   private var connectContinuations: [UUID: CheckedContinuation<Void, Error>] = [:]
   private var pendingWriteContinuations: [CheckedContinuation<Void, Error>] = []
 
-  public init(profile: BoardProfile) {
+  public init(profile: BoardProfile, deviceID: UUID? = nil) {
     self.profile = profile
+    self.deviceID = deviceID
 
     var continuation: AsyncStream<EasyLinkNotification>.Continuation!
     self.notifications = AsyncStream<EasyLinkNotification> { streamContinuation in
@@ -102,6 +104,13 @@ public final class CoreBluetoothEasyLinkTransport: NSObject, EasyLinkTransport, 
       withServices: nil,
       options: [CBCentralManagerScanOptionAllowDuplicatesKey: false]
     )
+  }
+
+  private func connect(_ peripheral: CBPeripheral, using central: CBCentralManager) {
+    central.stopScan()
+    self.peripheral = peripheral
+    peripheral.delegate = self
+    central.connect(peripheral)
   }
 
   private func finishConnect(_ result: Result<Void, Error>) {
@@ -190,15 +199,13 @@ extension CoreBluetoothEasyLinkTransport: CBCentralManagerDelegate {
     rssi RSSI: NSNumber
   ) {
     guard let name = peripheral.name ?? advertisementData[CBAdvertisementDataLocalNameKey] as? String,
-          profile.matchesPeripheralName(name)
+          profile.matchesPeripheralName(name),
+          deviceID == nil || peripheral.identifier == deviceID
     else {
       return
     }
 
-    central.stopScan()
-    self.peripheral = peripheral
-    peripheral.delegate = self
-    central.connect(peripheral)
+    connect(peripheral, using: central)
   }
 
   public func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeripheral) {

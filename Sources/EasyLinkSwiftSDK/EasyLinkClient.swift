@@ -16,6 +16,17 @@ public actor EasyLinkClient {
     )
   }
 
+  public init(device: EasyLinkDevice) {
+    self.init(profile: device.profile, deviceID: device.id)
+  }
+
+  public init(profile: BoardProfile, deviceID: UUID) {
+    self.init(
+      profile: profile,
+      transport: CoreBluetoothEasyLinkTransport(profile: profile, deviceID: deviceID)
+    )
+  }
+
   public init(profile: BoardProfile, transport: EasyLinkTransport) {
     self.profile = profile
     self.transport = transport

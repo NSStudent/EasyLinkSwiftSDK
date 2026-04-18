@@ -1,0 +1,4 @@
+.build/
+.build-ios/
+.swiftpm/
+DerivedData/

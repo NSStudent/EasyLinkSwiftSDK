@@ -5,12 +5,12 @@ actor FakeTransport: EasyLinkTransport {
   nonisolated let notifications: AsyncStream<EasyLinkNotification>
 
   private nonisolated let continuation: AsyncStream<EasyLinkNotification>.Continuation
-  private var responseHandler: (([UInt8]) -> [UInt8]?)?
+  private var responseHandler: (@Sendable ([UInt8]) -> [UInt8]?)?
   private(set) var writes: [[UInt8]] = []
   private(set) var didConnect = false
   private(set) var didDisconnect = false
 
-  init(responseHandler: (([UInt8]) -> [UInt8]?)? = nil) {
+  init(responseHandler: (@Sendable ([UInt8]) -> [UInt8]?)? = nil) {
     self.responseHandler = responseHandler
 
     var continuation: AsyncStream<EasyLinkNotification>.Continuation!

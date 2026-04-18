@@ -8,6 +8,11 @@ enum ProtocolConstants {
   static let responseCharacteristic = UUID(uuidString: "1b7e8273-2877-41c3-b46e-cf057c562023")!
 
   static let enableRealtimeMode: [UInt8] = [0x21, 0x01, 0x00]
+  static let enableUploadMode: [UInt8] = [0x21, 0x01, 0x01]
+  static let queryFilesCount: [UInt8] = [0x31, 0x01, 0x00]
+  static let readyForImport: [UInt8] = [0x33, 0x01, 0x00]
+  static let startImport: [UInt8] = [0x34, 0x01, 0x01]
+  static let fileImportDone: [UInt8] = [0x39, 0x01, 0x00]
 }
 
 extension BoardProfile {

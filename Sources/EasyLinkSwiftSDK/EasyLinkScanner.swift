@@ -1,7 +1,14 @@
 import Foundation
 @preconcurrency import CoreBluetooth
 
+/// Discovers Chessnut boards over Bluetooth.
 public enum EasyLinkScanner {
+  /// Scans for boards matching a profile.
+  ///
+  /// The stream yields ``EasyLinkDevice`` values that include the real
+  /// CoreBluetooth peripheral identifier and advertised name. Keep the
+  /// consuming task alive while the UI is discovering devices and cancel it
+  /// when scanning should stop.
   public static func scan(profile: BoardProfile) -> AsyncStream<EasyLinkDevice> {
     AsyncStream { continuation in
       let scanner = CoreBluetoothEasyLinkScanner(

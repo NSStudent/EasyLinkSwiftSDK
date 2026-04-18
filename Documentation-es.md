@@ -21,6 +21,7 @@
 | --- | --- |
 | `Package.swift` | Define el paquete SPM, plataformas, producto de libreria y target de tests. |
 | `README.md` | Resumen corto de perfiles, UUIDs, comandos y ejemplo basico. |
+| `Sources/EasyLinkSwiftSDK/EasyLinkSwiftSDK.docc` | Catalogo DocC con guias navegables y documentacion de API. |
 | `Sources/EasyLinkSwiftSDK/EasyLinkClient.swift` | Fachada publica principal para conectar, enviar comandos y consumir actualizaciones FEN. |
 | `Sources/EasyLinkSwiftSDK/EasyLinkScanner.swift` | API publica de discovery con CoreBluetooth que emite dispositivos Bluetooth reales. |
 | `Sources/EasyLinkSwiftSDK/CoreBluetoothEasyLinkTransport.swift` | Implementacion BLE real usando `CBCentralManager` y `CBPeripheralDelegate`. |
@@ -718,6 +719,5 @@ for piece in statuses {
 11. Anadir tests de timeout, desconexion, respuestas fuera de orden y multiples requests simultaneas.
 12. Anadir tests de integracion opcionales con hardware real detras de una bandera o scheme separado.
 13. Exponer un modo de logging o tracing de paquetes BLE para diagnostico.
-14. Anadir DocC (`.docc`) para generar documentacion navegable desde Xcode.
-15. Publicar ejemplos completos para iOS/macOS con permisos Bluetooth y ciclo de vida de UI.
-16. Separar API publica de codec de bajo nivel si se quiere mantener una superficie publica mas pequena y estable.
+14. Publicar ejemplos completos para iOS/macOS con permisos Bluetooth y ciclo de vida de UI.
+15. Separar API publica de codec de bajo nivel si se quiere mantener una superficie publica mas pequena y estable.

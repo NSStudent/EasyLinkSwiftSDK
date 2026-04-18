@@ -76,7 +76,7 @@ final class EasyLinkCodecTests: XCTestCase {
   func testParsesClassicBattery() throws {
     let status = try EasyLinkCodec.parseBatteryStatus(
       profile: .classic,
-      response: [0x2A, 0x02, 0x80 | 67, 0x00]
+      response: [0x2A, 0x02, UInt8(0x80 | 67), 0x00]
     )
 
     XCTAssertEqual(status, BatteryStatus(percentage: 67, isCharging: true))

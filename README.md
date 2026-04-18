@@ -199,10 +199,10 @@ for piece in pieces {
 
 ### Import OTB Games
 
-Use `importOTBGames(timeout:)` to download games stored by the board during over-the-board play:
+Use `importOTBGames(timeout:)` to download games stored by the board during over-the-board play. Stored-game transfer can take longer than simple commands, so the default timeout is 120 seconds:
 
 ```swift
-let games = try await client.importOTBGames(timeout: .seconds(5))
+let games = try await client.importOTBGames()
 
 for game in games {
   for position in game.positions {

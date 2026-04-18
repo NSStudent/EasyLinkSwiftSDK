@@ -4,10 +4,10 @@ Download games recorded by the board during over-the-board play.
 
 ## Overview
 
-Use ``EasyLinkClient/importOTBGames(timeout:)`` to switch the board into upload mode, query the number of stored games, and collect each game as an ``OTBGame``.
+Use ``EasyLinkClient/importOTBGames(timeout:)`` to switch the board into upload mode, query the number of stored games, download one stored game, mark it imported, and repeat until the board reports that no games remain.
 
 ```swift
-let games = try await client.importOTBGames(timeout: .seconds(5))
+let games = try await client.importOTBGames()
 
 for game in games {
   for position in game.positions {
@@ -41,7 +41,7 @@ if games.isEmpty {
 
 ## Timeout And Disconnects
 
-The timeout applies while waiting for upload responses and FEN packets. If the board disconnects during import, the method throws ``EasyLinkError/disconnected``.
+The timeout applies while waiting for upload responses and FEN packets. Stored-game transfer can take significantly longer than simple commands, so the default timeout is 120 seconds. If the board disconnects during import, the method throws ``EasyLinkError/disconnected``.
 
 ## Topics
 

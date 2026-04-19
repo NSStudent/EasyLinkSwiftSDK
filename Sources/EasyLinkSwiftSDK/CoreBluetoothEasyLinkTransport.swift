@@ -26,7 +26,7 @@ private func transportDebugProperties(_ properties: CBCharacteristicProperties) 
 #endif
 
 // CoreBluetooth delegate callbacks are delivered on `queue`; all mutable BLE state below is accessed by scheduling onto that queue.
-public final class CoreBluetoothEasyLinkTransport: NSObject, EasyLinkTransport, EasyLinkResponsePollingTransport, @unchecked Sendable {
+public final class CoreBluetoothEasyLinkTransport: NSObject, EasyLinkTransport, EasyLinkResponsePollingTransport, EasyLinkNotificationRearmingTransport, @unchecked Sendable {
   private static let minimumWriteInterval: TimeInterval = 0.2
 
   public let notifications: AsyncStream<EasyLinkNotification>
@@ -45,6 +45,7 @@ public final class CoreBluetoothEasyLinkTransport: NSObject, EasyLinkTransport, 
   private var pendingWriteContinuations: [CheckedContinuation<Void, Error>] = []
   private var nextWriteDate = Date.distantPast
   private var responsePollCount = 0
+  private var lastErroredResponseValue: [UInt8]?
 
   public init(profile: BoardProfile, deviceID: UUID? = nil) {
     self.profile = profile
@@ -117,6 +118,7 @@ public final class CoreBluetoothEasyLinkTransport: NSObject, EasyLinkTransport, 
         self.fenNotificationCharacteristic = nil
         self.responseNotificationCharacteristic = nil
         self.responsePollCount = 0
+        self.lastErroredResponseValue = nil
         self.nextWriteDate = .distantPast
         self.peripheral = nil
         self.finishConnect(.failure(EasyLinkError.disconnected))
@@ -149,23 +151,90 @@ public final class CoreBluetoothEasyLinkTransport: NSObject, EasyLinkTransport, 
           return
         }
 
-        guard characteristic.properties.contains(.read) else {
-          if self.responsePollCount == 0 {
-            #if DEBUG
-            easyLinkTransportLogger.debug("poll response unsupported; properties=\(transportDebugProperties(characteristic.properties), privacy: .public)")
-            #endif
-          }
-          self.responsePollCount += 1
-          return
-        }
-
         self.responsePollCount += 1
         #if DEBUG
         if self.responsePollCount == 1 || self.responsePollCount.isMultiple(of: 20) {
-          easyLinkTransportLogger.debug("poll response readValue count=\(self.responsePollCount, privacy: .public)")
+          easyLinkTransportLogger.debug("poll response readValue count=\(self.responsePollCount, privacy: .public) properties=\(transportDebugProperties(characteristic.properties), privacy: .public)")
         }
         #endif
         peripheral.readValue(for: characteristic)
+      }
+    }
+  }
+
+  func rearmNotificationCharacteristics() async {
+    await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+      queue.async {
+        let characteristics = [
+          self.fenNotificationCharacteristic,
+          self.responseNotificationCharacteristic,
+        ].compactMap { $0 }
+
+        guard let peripheral = self.peripheral,
+              peripheral.state == .connected,
+              !characteristics.isEmpty
+        else {
+          #if DEBUG
+          easyLinkTransportLogger.debug("rearm notifications skipped; characteristics not ready")
+          #endif
+          continuation.resume()
+          return
+        }
+
+        #if DEBUG
+        easyLinkTransportLogger.debug("rearm notifications disabling count=\(characteristics.count, privacy: .public)")
+        #endif
+        for characteristic in characteristics where characteristic.isNotifying {
+          peripheral.setNotifyValue(false, for: characteristic)
+        }
+
+        self.queue.asyncAfter(deadline: .now() + 0.15) {
+          #if DEBUG
+          easyLinkTransportLogger.debug("rearm notifications enabling count=\(characteristics.count, privacy: .public)")
+          #endif
+          for characteristic in characteristics {
+            peripheral.setNotifyValue(true, for: characteristic)
+          }
+
+          self.queue.asyncAfter(deadline: .now() + 0.25) {
+            continuation.resume()
+          }
+        }
+      }
+    }
+  }
+
+  func rearmFENNotificationCharacteristic() async {
+    await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+      queue.async {
+        guard let peripheral = self.peripheral,
+              peripheral.state == .connected,
+              let characteristic = self.fenNotificationCharacteristic
+        else {
+          #if DEBUG
+          easyLinkTransportLogger.debug("rearm FEN notification skipped; characteristic not ready")
+          #endif
+          continuation.resume()
+          return
+        }
+
+        #if DEBUG
+        easyLinkTransportLogger.debug("rearm FEN notification disabling")
+        #endif
+        if characteristic.isNotifying {
+          peripheral.setNotifyValue(false, for: characteristic)
+        }
+
+        self.queue.asyncAfter(deadline: .now() + 0.15) {
+          #if DEBUG
+          easyLinkTransportLogger.debug("rearm FEN notification enabling")
+          #endif
+          peripheral.setNotifyValue(true, for: characteristic)
+
+          self.queue.asyncAfter(deadline: .now() + 0.25) {
+            continuation.resume()
+          }
+        }
       }
     }
   }
@@ -197,15 +266,30 @@ public final class CoreBluetoothEasyLinkTransport: NSObject, EasyLinkTransport, 
       return
     }
 
+    let writeType: CBCharacteristicWriteType = commandCharacteristic.properties.contains(.writeWithoutResponse)
+      ? .withoutResponse
+      : .withResponse
+
     #if DEBUG
-    easyLinkTransportLogger.debug("perform write characteristic=\(commandCharacteristic.uuid.uuidString, privacy: .public) len=\(command.count, privacy: .public) bytes=\(transportDebugHex(command), privacy: .public)")
+    let writeTypeDescription = writeType == .withoutResponse ? "withoutResponse" : "withResponse"
+    easyLinkTransportLogger.debug("perform write characteristic=\(commandCharacteristic.uuid.uuidString, privacy: .public) type=\(writeTypeDescription, privacy: .public) len=\(command.count, privacy: .public) bytes=\(transportDebugHex(command), privacy: .public)")
     #endif
-    pendingWriteContinuations.append(continuation)
-    peripheral.writeValue(
-      Data(command),
-      for: commandCharacteristic,
-      type: .withResponse
-    )
+
+    if writeType == .withResponse {
+      pendingWriteContinuations.append(continuation)
+      peripheral.writeValue(
+        Data(command),
+        for: commandCharacteristic,
+        type: writeType
+      )
+    } else {
+      peripheral.writeValue(
+        Data(command),
+        for: commandCharacteristic,
+        type: writeType
+      )
+      continuation.resume()
+    }
   }
 
   private func startScanIfReady() {
@@ -372,6 +456,7 @@ extension CoreBluetoothEasyLinkTransport: CBCentralManagerDelegate {
     fenNotificationCharacteristic = nil
     responseNotificationCharacteristic = nil
     responsePollCount = 0
+    lastErroredResponseValue = nil
     nextWriteDate = .distantPast
     self.peripheral = nil
     finishConnect(.failure(error ?? EasyLinkError.disconnected))
@@ -457,6 +542,7 @@ extension CoreBluetoothEasyLinkTransport: CBPeripheralDelegate {
         #endif
         responseNotificationCharacteristic = characteristic
         responsePollCount = 0
+        lastErroredResponseValue = nil
         peripheral.setNotifyValue(true, for: characteristic)
 
       default:
@@ -502,14 +588,36 @@ extension CoreBluetoothEasyLinkTransport: CBPeripheralDelegate {
     didUpdateValueFor characteristic: CBCharacteristic,
     error: Error?
   ) {
-    guard error == nil, let value = characteristic.value else {
+    if let error {
+      guard let value = characteristic.value,
+            characteristic.uuid == CBUUID(nsuuid: ProtocolConstants.responseCharacteristic)
+      else {
+        #if DEBUG
+        easyLinkTransportLogger.error("didUpdateValue ignored characteristic=\(characteristic.uuid.uuidString, privacy: .public) error=\(String(describing: error), privacy: .public) hasValue=\((characteristic.value != nil), privacy: .public)")
+        #endif
+        return
+      }
+
+      let bytes = Array(value)
+      guard bytes != lastErroredResponseValue else {
+        return
+      }
+      lastErroredResponseValue = bytes
       #if DEBUG
-      easyLinkTransportLogger.error("didUpdateValue ignored characteristic=\(characteristic.uuid.uuidString, privacy: .public) error=\(String(describing: error), privacy: .public) hasValue=\((characteristic.value != nil), privacy: .public)")
+      easyLinkTransportLogger.debug("didUpdateValue response with error len=\(bytes.count, privacy: .public) bytes=\(transportDebugHex(bytes), privacy: .public) error=\(String(describing: error), privacy: .public)")
       #endif
+      notificationContinuation.yield(.response(bytes))
+      return
+    }
+
+    guard let value = characteristic.value else {
       return
     }
 
     let bytes = Array(value)
+    if characteristic.uuid == CBUUID(nsuuid: ProtocolConstants.responseCharacteristic) {
+      lastErroredResponseValue = nil
+    }
     switch characteristic.uuid {
     case CBUUID(nsuuid: ProtocolConstants.fenNotificationCharacteristic):
       #if DEBUG

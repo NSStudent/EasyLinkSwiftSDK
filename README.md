@@ -217,6 +217,30 @@ Each `OTBGame` contains FEN placement strings. Import mode pauses live FEN updat
 try await client.enableRealtimeUpdates()
 ```
 
+### OTB Upload Flow
+
+The expected stored-game upload flow is:
+
+```mermaid
+graph TD
+    A([Start]) --> B[Switch to upload mode]
+    B --> C[Query the files count]
+    C --> D[/read the file count/]
+    D --> E{files count > 0}
+
+    E --> F([END])
+    E -- YES --> G[Send ready for import command]
+
+    G --> H[Send start import command]
+    H --> I[/read input data/]
+    I --> J{input data = end flag}
+
+    J -- NO --> I
+    J -- YES --> K(send file import done command)
+
+    K --> C
+```
+
 ## Custom Transports
 
 `EasyLinkClient` depends on `EasyLinkTransport`, so tests and simulators can replace CoreBluetooth:

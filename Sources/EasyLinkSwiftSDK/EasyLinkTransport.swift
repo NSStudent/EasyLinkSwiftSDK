@@ -18,7 +18,17 @@ public protocol EasyLinkTransport: AnyObject, Sendable {
 protocol EasyLinkResponsePollingTransport: EasyLinkTransport {
   /// Requests a best-effort read of the response characteristic.
   ///
-  /// CoreBluetooth still reports the value through `notifications`, so callers
-  /// should keep consuming the normal notification stream.
+  /// Some Chessnut Air firmware revisions appear to advance OTB upload data
+  /// after ATT read attempts even though the characteristic advertises notify
+  /// only. CoreBluetooth may report "read not permitted" while still exposing
+  /// the latest characteristic value.
   func pollResponseCharacteristic() async
+}
+
+protocol EasyLinkNotificationRearmingTransport: EasyLinkTransport {
+  /// Rewrites notification subscriptions after board mode changes.
+  func rearmNotificationCharacteristics() async
+
+  /// Rewrites only the FEN notification subscription.
+  func rearmFENNotificationCharacteristic() async
 }

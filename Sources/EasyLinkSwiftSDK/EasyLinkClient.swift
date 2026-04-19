@@ -223,10 +223,6 @@ public actor EasyLinkClient {
 
     while true {
       #if DEBUG
-      easyLinkClientLogger.debug("OTB enable upload mode")
-      #endif
-      try await transport.write(ProtocolConstants.enableUploadMode)
-      #if DEBUG
       easyLinkClientLogger.debug("OTB query file count command")
       #endif
       try await transport.write(ProtocolConstants.queryFilesCount)
@@ -246,6 +242,16 @@ public actor EasyLinkClient {
       #if DEBUG
       easyLinkClientLogger.debug("OTB upload channel installed")
       #endif
+      #if DEBUG
+      easyLinkClientLogger.debug("OTB enable upload mode")
+      #endif
+      try await transport.write(ProtocolConstants.enableUploadMode)
+      if let rearmingTransport = transport as? EasyLinkNotificationRearmingTransport {
+        #if DEBUG
+        easyLinkClientLogger.debug("OTB rearm notifications after upload mode")
+        #endif
+        await rearmingTransport.rearmNotificationCharacteristics()
+      }
       let game = try await importNextOTBGame(from: channel, timeout: timeout)
       games.append(game)
       #if DEBUG
@@ -341,6 +347,12 @@ public actor EasyLinkClient {
         if !didReceiveStartFlag {
           positions.removeAll()
           didReceiveStartFlag = true
+          if let rearmingTransport = transport as? EasyLinkNotificationRearmingTransport {
+            #if DEBUG
+            easyLinkClientLogger.debug("OTB rearm FEN notification after start flag")
+            #endif
+            await rearmingTransport.rearmFENNotificationCharacteristic()
+          }
         }
 
       case let .response(bytes) where isOTBFlag(bytes, marker: 0xED):
@@ -387,11 +399,15 @@ public actor EasyLinkClient {
       return try await channel.next(timeout: timeout)
     }
 
-    let pollTask = Task { [transport] in
+    let transport = transport
+    let pollTask = Task {
+      guard let pollingTransport = transport as? EasyLinkResponsePollingTransport else {
+        return
+      }
+
       while !Task.isCancelled {
         try? await Task.sleep(for: .milliseconds(250))
         guard !Task.isCancelled else { return }
-        guard let pollingTransport = transport as? EasyLinkResponsePollingTransport else { return }
         await pollingTransport.pollResponseCharacteristic()
       }
     }

@@ -11,9 +11,14 @@ final class OTBImportTests: XCTestCase {
 
   private func makeClient(
     queuedResponses: [[UInt8]: [[UInt8]]] = [:],
-    responseHandler: (@Sendable ([UInt8]) -> [UInt8]?)? = nil
+    responseHandler: (@Sendable ([UInt8]) -> [UInt8]?)? = nil,
+    polledNotifications: [EasyLinkNotification] = []
   ) async throws -> (EasyLinkClient, FakeTransport) {
-    let transport = FakeTransport(responseHandler: responseHandler, queuedResponses: queuedResponses)
+    let transport = FakeTransport(
+      responseHandler: responseHandler,
+      queuedResponses: queuedResponses,
+      polledNotifications: polledNotifications
+    )
     let client = EasyLinkClient(profile: .classic, transport: transport)
     try await client.connect()
     return (client, transport)
@@ -42,7 +47,6 @@ final class OTBImportTests: XCTestCase {
     _ = try await client.importOTBGames(timeout: .seconds(1))
     let writes = await transport.writes
     XCTAssertEqual(writes, [
-      ProtocolConstants.enableUploadMode,
       ProtocolConstants.queryFilesCount,
     ])
   }
@@ -62,12 +66,11 @@ final class OTBImportTests: XCTestCase {
     _ = try await importTask.value
     let writes = await transport.writes
     XCTAssertEqual(writes, [
-      ProtocolConstants.enableUploadMode,
       ProtocolConstants.queryFilesCount,
+      ProtocolConstants.enableUploadMode,
       ProtocolConstants.readyForImport,
       ProtocolConstants.startImport,
       ProtocolConstants.fileImportDone,
-      ProtocolConstants.enableUploadMode,
       ProtocolConstants.queryFilesCount,
     ])
   }
@@ -104,6 +107,30 @@ final class OTBImportTests: XCTestCase {
     let games = try await importTask.value
     XCTAssertEqual(games.count, 1)
     XCTAssertEqual(games[0].positions, [placement])
+  }
+
+  func testImportOTBGamesPollsResponseCharacteristicAfterStartFlag() async throws {
+    let placement = "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR"
+    let (client, transport) = try await makeClient(
+      queuedResponses: queuedCountResponses(1, 0),
+      responseHandler: { command in
+        switch command {
+        case ProtocolConstants.startImport:   [0x37, 0x01, 0xBE]
+        default:                              nil
+        }
+      },
+      polledNotifications: [
+        .response(try fenPacket(placement: placement)),
+        .response([0x37, 0x01, 0xED]),
+      ]
+    )
+
+    let games = try await client.importOTBGames(timeout: .seconds(2))
+
+    XCTAssertEqual(games.count, 1)
+    XCTAssertEqual(games[0].positions, [placement])
+    let pollCount = await transport.pollCount
+    XCTAssertGreaterThan(pollCount, 0)
   }
 
   func testImportOTBGamesIgnoresFileMetadataResponse() async throws {

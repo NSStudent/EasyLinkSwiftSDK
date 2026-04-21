@@ -41,6 +41,7 @@ public final class CoreBluetoothEasyLinkTransport: NSObject, EasyLinkTransport, 
   private var commandCharacteristic: CBCharacteristic?
   private var fenNotificationCharacteristic: CBCharacteristic?
   private var responseNotificationCharacteristic: CBCharacteristic?
+  private var fileNotificationCharacteristic: CBCharacteristic?
   private var connectContinuations: [UUID: CheckedContinuation<Void, Error>] = [:]
   private var pendingWriteContinuations: [CheckedContinuation<Void, Error>] = []
   private var nextWriteDate = Date.distantPast
@@ -428,7 +429,8 @@ extension CoreBluetoothEasyLinkTransport: CBCentralManagerDelegate {
     #endif
     peripheral.discoverServices([
       CBUUID(nsuuid: ProtocolConstants.fenService),
-      CBUUID(nsuuid: ProtocolConstants.operationService)
+      CBUUID(nsuuid: ProtocolConstants.operationService),
+      CBUUID(nsuuid: ProtocolConstants.fileService)
     ])
   }
 
@@ -455,6 +457,7 @@ extension CoreBluetoothEasyLinkTransport: CBCentralManagerDelegate {
     commandCharacteristic = nil
     fenNotificationCharacteristic = nil
     responseNotificationCharacteristic = nil
+    fileNotificationCharacteristic = nil
     responsePollCount = 0
     lastErroredResponseValue = nil
     nextWriteDate = .distantPast
@@ -493,6 +496,12 @@ extension CoreBluetoothEasyLinkTransport: CBPeripheralDelegate {
             CBUUID(nsuuid: ProtocolConstants.commandCharacteristic),
             CBUUID(nsuuid: ProtocolConstants.responseCharacteristic)
           ],
+          for: service
+        )
+
+      case CBUUID(nsuuid: ProtocolConstants.fileService):
+        peripheral.discoverCharacteristics(
+          [CBUUID(nsuuid: ProtocolConstants.fileNotificationCharacteristic)],
           for: service
         )
 
@@ -545,6 +554,13 @@ extension CoreBluetoothEasyLinkTransport: CBPeripheralDelegate {
         lastErroredResponseValue = nil
         peripheral.setNotifyValue(true, for: characteristic)
 
+      case CBUUID(nsuuid: ProtocolConstants.fileNotificationCharacteristic):
+        #if DEBUG
+        easyLinkTransportLogger.debug("file notification characteristic discovered; enabling notify")
+        #endif
+        fileNotificationCharacteristic = characteristic
+        peripheral.setNotifyValue(true, for: characteristic)
+
       default:
         break
       }
@@ -575,6 +591,9 @@ extension CoreBluetoothEasyLinkTransport: CBPeripheralDelegate {
 
     case CBUUID(nsuuid: ProtocolConstants.responseCharacteristic):
       responseNotificationCharacteristic = characteristic
+
+    case CBUUID(nsuuid: ProtocolConstants.fileNotificationCharacteristic):
+      fileNotificationCharacteristic = characteristic
 
     default:
       break
@@ -628,6 +647,12 @@ extension CoreBluetoothEasyLinkTransport: CBPeripheralDelegate {
     case CBUUID(nsuuid: ProtocolConstants.responseCharacteristic):
       #if DEBUG
       easyLinkTransportLogger.debug("didUpdateValue response len=\(bytes.count, privacy: .public) bytes=\(transportDebugHex(bytes), privacy: .public)")
+      #endif
+      notificationContinuation.yield(.response(bytes))
+
+    case CBUUID(nsuuid: ProtocolConstants.fileNotificationCharacteristic):
+      #if DEBUG
+      easyLinkTransportLogger.debug("didUpdateValue file len=\(bytes.count, privacy: .public) bytes=\(transportDebugHex(bytes), privacy: .public)")
       #endif
       notificationContinuation.yield(.response(bytes))
 

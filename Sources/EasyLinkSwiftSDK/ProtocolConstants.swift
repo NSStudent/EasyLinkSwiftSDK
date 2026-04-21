@@ -6,6 +6,8 @@ enum ProtocolConstants {
   static let operationService = UUID(uuidString: "1b7e8271-2877-41c3-b46e-cf057c562023")!
   static let commandCharacteristic = UUID(uuidString: "1b7e8272-2877-41c3-b46e-cf057c562023")!
   static let responseCharacteristic = UUID(uuidString: "1b7e8273-2877-41c3-b46e-cf057c562023")!
+  static let fileService = UUID(uuidString: "1b7e8281-2877-41c3-b46e-cf057c562023")!
+  static let fileNotificationCharacteristic = UUID(uuidString: "1b7e8283-2877-41c3-b46e-cf057c562023")!
 
   static let enableRealtimeMode: [UInt8] = [0x21, 0x01, 0x00]
   static let enableUploadMode: [UInt8] = [0x21, 0x01, 0x01]

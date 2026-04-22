@@ -6,8 +6,8 @@
 [![Swift Package Manager](https://img.shields.io/badge/SwiftPM-compatible-brightgreen.svg)](https://www.swift.org/package-manager/)
 [![Platforms](https://img.shields.io/badge/platforms-iOS%2016%20%7C%20macOS%2013-lightgrey.svg)](Package.swift)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![Swift Package Index Swift Versions](https://img.shields.io/endpoint?url=https://swiftpackageindex.com/api/packages/NSStudent/EasyLinkSwiftSDK/badge?type=swift-versions)](https://swiftpackageindex.com/NSStudent/EasyLinkSwiftSDK)
-[![Swift Package Index Platforms](https://img.shields.io/endpoint?url=https://swiftpackageindex.com/api/packages/NSStudent/EasyLinkSwiftSDK/badge?type=platforms)](https://swiftpackageindex.com/NSStudent/EasyLinkSwiftSDK)
+[![](https://img.shields.io/endpoint?url=https%3A%2F%2Fswiftpackageindex.com%2Fapi%2Fpackages%2FNSStudent%2FEasyLinkSwiftSDK%2Fbadge%3Ftype%3Dswift-versions)](https://swiftpackageindex.com/NSStudent/EasyLinkSwiftSDK)
+[![](https://img.shields.io/endpoint?url=https%3A%2F%2Fswiftpackageindex.com%2Fapi%2Fpackages%2FNSStudent%2FEasyLinkSwiftSDK%2Fbadge%3Ftype%3Dplatforms)](https://swiftpackageindex.com/NSStudent/EasyLinkSwiftSDK)
 
 `EasyLinkSwiftSDK` is a native Swift package for discovering and communicating with [Chessnut](https://www.chessnutech.com) electronic chessboards over Bluetooth Low Energy.
 
@@ -20,6 +20,7 @@ The package targets iOS 16 and macOS 13, uses CoreBluetooth directly, and expose
 - Receive realtime board positions as FEN placement strings through `AsyncStream`.
 - Query battery status.
 - Control LEDs for classic Chessnut boards and Chessnut Move.
+- Import OTB games recorded by the board as FEN placement snapshots.
 - Use Chessnut Move auto-move, stop auto-move, and piece-status commands.
 - Inject custom transports for tests, simulators, replay tools, or alternative BLE stacks.
 - Generate DocC documentation for public API and usage guides.
@@ -196,6 +197,50 @@ for piece in pieces {
 }
 ```
 
+### Import OTB Games
+
+Use `importOTBGames(timeout:)` to download games stored by the board during over-the-board play. Stored-game transfer can take longer than simple commands, so the default timeout is 120 seconds:
+
+```swift
+let games = try await client.importOTBGames()
+
+for game in games {
+  for position in game.positions {
+    print(position)
+  }
+}
+```
+
+Each `OTBGame` contains FEN placement strings. Import mode pauses live FEN updates while stored games are being transferred, so enable realtime updates again when the import finishes:
+
+```swift
+try await client.enableRealtimeUpdates()
+```
+
+### OTB Upload Flow
+
+The expected stored-game upload flow is:
+
+```mermaid
+graph TD
+    A([Start]) --> B[Switch to upload mode]
+    B --> C[Query the files count]
+    C --> D[/read the file count/]
+    D --> E{files count > 0}
+
+    E --> F([END])
+    E -- YES --> G[Send ready for import command]
+
+    G --> H[Send start import command]
+    H --> I[/read input data/]
+    I --> J{input data = end flag}
+
+    J -- NO --> I
+    J -- YES --> K(send file import done command)
+
+    K --> C
+```
+
 ## Custom Transports
 
 `EasyLinkClient` depends on `EasyLinkTransport`, so tests and simulators can replace CoreBluetooth:
@@ -227,6 +272,11 @@ FEN notifications are decoded using the same nibble mapping as the C++ SDK's `Ch
 Common realtime command:
 
 - Enable realtime FEN: `[0x21, 0x01, 0x00]`
+- Enable OTB upload mode: `[0x21, 0x01, 0x01]`
+- Query OTB file count: `[0x31, 0x01, 0x00]`
+- Ready for OTB import: `[0x33, 0x01, 0x00]`
+- Start OTB import: `[0x34, 0x01, 0x01]`
+- Mark OTB file import done: `[0x39, 0x01, 0x00]`
 
 Classic profile:
 
@@ -258,10 +308,12 @@ Chessnut Move profile:
 - [x] Realtime FEN updates with `AsyncStream`.
 - [x] Classic and Chessnut Move LED commands.
 - [x] Battery status query for supported profiles.
+- [x] OTB game import with stored FEN placement snapshots.
 - [x] Chessnut Move auto-move and stop auto-move commands.
 - [x] Chessnut Move piece-status parsing.
 - [x] Bounded response buffering in the internal response router.
-- [x] Unit tests for codec, client flows, response routing, and strict concurrency builds.
+- [x] Unit tests for codec, client flows, OTB import, response routing, and strict concurrency builds.
+- [x] CoreBluetooth integration tests isolated behind an explicit environment flag.
 - [x] GitHub Actions for tests, coverage, release, and DocC publishing.
 - [x] DocC catalog with API documentation and usage guides.
 
@@ -276,6 +328,9 @@ Chessnut Move profile:
 - [ ] Add coordinate helpers for chess notation such as `e4`.
 - [ ] Build full FEN helpers for side to move, castling rights, en passant, and counters.
 - [ ] Document the coordinate system used by FEN, LEDs, and piece status in more detail.
+- [ ] Document OTB protocol behavior against more board firmware versions.
+- [ ] Add PGN conversion helpers for imported OTB games.
+- [ ] Add OTB import progress reporting for long stored-game transfers.
 - [ ] Add tests for timeout, disconnection, out-of-order responses, and simultaneous requests.
 - [ ] Add optional real-hardware integration tests behind a flag or separate scheme.
 - [ ] Add packet logging or tracing for BLE diagnostics.

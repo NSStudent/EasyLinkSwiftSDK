@@ -6,7 +6,7 @@ Discover and control Chessnut electronic chessboards over Bluetooth Low Energy.
 
 EasyLinkSwiftSDK is a native Swift package for communicating with Chessnut boards on iOS 16 and macOS 13 or later. It uses CoreBluetooth, exposes async APIs, and publishes realtime board positions through `AsyncStream`.
 
-Use ``EasyLinkScanner`` when your app needs to show real Bluetooth devices in a picker. Use ``EasyLinkClient`` to connect, enable realtime updates, query battery state, set LEDs, and use Chessnut Move specific commands.
+Use ``EasyLinkScanner`` when your app needs to show real Bluetooth devices in a picker. Use ``EasyLinkClient`` to connect, enable realtime updates, query battery state, set LEDs, import OTB games stored on the board, and use Chessnut Move specific commands.
 
 ```swift
 for await device in EasyLinkScanner.scan(profile: .move) {
@@ -34,8 +34,10 @@ try await client.enableRealtimeUpdates()
 ### Client API
 
 - <doc:RealtimeUpdates>
+- <doc:OTBGameImport>
 - <doc:CommandsAndResponses>
 - ``EasyLinkClient``
+- ``OTBGame``
 - ``BatteryStatus``
 - ``LEDBoard``
 - ``LEDColor``

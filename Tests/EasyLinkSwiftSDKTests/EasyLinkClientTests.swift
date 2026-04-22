@@ -78,10 +78,7 @@ final class EasyLinkClientTests: XCTestCase {
   }
 
   func testPieceStatusWritesMoveCommandAndParsesResponse() async throws {
-    var payload: [UInt8] = []
-    for index in 0..<34 {
-      payload += [UInt8(index), 1, 2, 3]
-    }
+    let payload: [UInt8] = (0..<34).flatMap { index in [UInt8(index), 1, 2, 3] }
 
     let transport = FakeTransport { command in
       command == [0x41, 0x01, 0x0B] ? [0x41, 0x89, 0x0B] + payload : nil

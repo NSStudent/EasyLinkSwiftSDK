@@ -68,6 +68,17 @@ public struct LEDBoard: Sendable, Equatable {
   }
 }
 
+/// A game recorded by the board during OTB (over-the-board) play.
+public struct OTBGame: Sendable, Equatable {
+  /// FEN placement strings captured by the board during the game.
+  public let positions: [String]
+
+  /// Creates an OTB game value.
+  public init(positions: [String]) {
+    self.positions = positions
+  }
+}
+
 /// Battery state reported by a board.
 public struct BatteryStatus: Sendable, Equatable {
   /// Battery percentage reported by the device.

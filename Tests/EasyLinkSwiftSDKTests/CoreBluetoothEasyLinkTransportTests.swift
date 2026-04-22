@@ -1,4 +1,5 @@
 import EasyLinkSwiftSDK
+import Foundation
 import XCTest
 
 final class CoreBluetoothEasyLinkTransportTests: XCTestCase {
@@ -53,7 +54,9 @@ final class CoreBluetoothEasyLinkTransportTests: XCTestCase {
     XCTAssertNotNil(transport)
   }
 
-  func testConnectCancellationDoesNotHang() async {
+  func testConnectCancellationDoesNotHang() async throws {
+    try skipUnlessCoreBluetoothIntegrationTestsAreEnabled()
+
     let transport = CoreBluetoothEasyLinkTransport(profile: .classic)
 
     let task = Task<Void, Error> {
@@ -76,5 +79,11 @@ final class CoreBluetoothEasyLinkTransportTests: XCTestCase {
     let transport = CoreBluetoothEasyLinkTransport(profile: .classic)
     await transport.disconnect()
     await transport.disconnect()
+  }
+
+  private func skipUnlessCoreBluetoothIntegrationTestsAreEnabled() throws {
+    guard ProcessInfo.processInfo.environment["EASYLINK_RUN_COREBLUETOOTH_TESTS"] == "1" else {
+      throw XCTSkip("Set EASYLINK_RUN_COREBLUETOOTH_TESTS=1 from an app/test host with NSBluetoothAlwaysUsageDescription to run CoreBluetooth integration tests.")
+    }
   }
 }

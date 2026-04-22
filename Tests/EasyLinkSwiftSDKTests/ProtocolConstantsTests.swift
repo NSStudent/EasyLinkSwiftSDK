@@ -14,6 +14,26 @@ final class ProtocolConstantsTests: XCTestCase {
     XCTAssertEqual(ProtocolConstants.enableRealtimeMode, [0x21, 0x01, 0x00])
   }
 
+  func testEnableUploadModeCommand() {
+    XCTAssertEqual(ProtocolConstants.enableUploadMode, [0x21, 0x01, 0x01])
+  }
+
+  func testQueryFilesCountCommand() {
+    XCTAssertEqual(ProtocolConstants.queryFilesCount, [0x31, 0x01, 0x00])
+  }
+
+  func testReadyForImportCommand() {
+    XCTAssertEqual(ProtocolConstants.readyForImport, [0x33, 0x01, 0x00])
+  }
+
+  func testStartImportCommand() {
+    XCTAssertEqual(ProtocolConstants.startImport, [0x34, 0x01, 0x01])
+  }
+
+  func testFileImportDoneCommand() {
+    XCTAssertEqual(ProtocolConstants.fileImportDone, [0x39, 0x01, 0x00])
+  }
+
   func testClassicMatchesChessnutBoardNames() {
     XCTAssertTrue(BoardProfile.classic.matchesPeripheralName("Chessnut Air"))
     XCTAssertTrue(BoardProfile.classic.matchesPeripheralName("Chessnut Air+"))

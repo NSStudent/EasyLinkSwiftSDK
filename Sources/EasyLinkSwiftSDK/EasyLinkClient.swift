@@ -1,58 +1,24 @@
 import Foundation
-#if DEBUG
-import OSLog
-
-private let easyLinkClientLogger = Logger(subsystem: "EasyLinkSwiftSDK", category: "EasyLinkClient")
-
-private func debugHex(_ bytes: [UInt8]) -> String {
-  bytes.map { String(format: "%02X", $0) }.joined(separator: " ")
-}
-
-private func debugDescription(_ notification: EasyLinkNotification) -> String {
-  switch notification {
-  case let .fen(packet):
-    "fen len=\(packet.count) bytes=\(debugHex(packet))"
-  case let .response(bytes):
-    "response len=\(bytes.count) bytes=\(debugHex(bytes))"
-  case .disconnected:
-    "disconnected"
-  }
-}
-#endif
 
 private actor CommandGate {
   private var isLocked = false
   private var waiters: [CheckedContinuation<Void, Never>] = []
 
-  func acquire(operationName: String) async {
+  func acquire() async {
     guard isLocked else {
       isLocked = true
-      #if DEBUG
-      easyLinkClientLogger.debug("CommandGate immediate acquire operation=\(operationName, privacy: .public)")
-      #endif
       return
     }
-
-    #if DEBUG
-    easyLinkClientLogger.debug("CommandGate queued operation=\(operationName, privacy: .public) waiters=\(self.waiters.count, privacy: .public)")
-    #endif
     await withCheckedContinuation { continuation in
       waiters.append(continuation)
     }
   }
 
-  func release(operationName: String) {
+  func release() {
     guard !waiters.isEmpty else {
       isLocked = false
-      #if DEBUG
-      easyLinkClientLogger.debug("CommandGate unlocked operation=\(operationName, privacy: .public)")
-      #endif
       return
     }
-
-    #if DEBUG
-    easyLinkClientLogger.debug("CommandGate resuming next operation=\(operationName, privacy: .public) remainingAfterResume=\(self.waiters.count - 1, privacy: .public)")
-    #endif
     waiters.removeFirst().resume()
   }
 }
@@ -124,14 +90,14 @@ public actor EasyLinkClient {
 
   /// Enables realtime FEN notifications on the board.
   public func enableRealtimeUpdates() async throws {
-    try await withCommandGate("enableRealtimeUpdates") {
+    try await withCommandGate {
       try await transport.write(ProtocolConstants.enableRealtimeMode)
     }
   }
 
   /// Sets LEDs using the command format for the active profile.
   public func setLEDs(_ board: LEDBoard) async throws {
-    try await withCommandGate("setLEDs") {
+    try await withCommandGate {
       let command: [UInt8]
       switch profile {
       case .classic:
@@ -145,7 +111,7 @@ public actor EasyLinkClient {
 
   /// Requests the board battery status.
   public func batteryStatus(timeout: Duration = .seconds(3)) async throws -> BatteryStatus {
-    try await withCommandGate("batteryStatus") {
+    try await withCommandGate {
       try await transport.write(profile.batteryCommand)
       let profile = self.profile
       let response = try await responseRouter.wait(
@@ -165,7 +131,7 @@ public actor EasyLinkClient {
 
   /// Starts a Chessnut Move auto-move operation from a FEN placement.
   public func setAutoMove(fen: String, force: Bool = true) async throws {
-    try await withCommandGate("setAutoMove") {
+    try await withCommandGate {
       guard profile == .move else {
         throw EasyLinkError.unsupportedCommand(profile)
       }
@@ -175,7 +141,7 @@ public actor EasyLinkClient {
 
   /// Stops the current Chessnut Move auto-move operation.
   public func stopAutoMove() async throws {
-    try await withCommandGate("stopAutoMove") {
+    try await withCommandGate {
       guard profile == .move else {
         throw EasyLinkError.unsupportedCommand(profile)
       }
@@ -185,7 +151,7 @@ public actor EasyLinkClient {
 
   /// Requests Chessnut Move piece status records.
   public func pieceStatus(timeout: Duration = .seconds(3)) async throws -> [PieceStatus] {
-    try await withCommandGate("pieceStatus") {
+    try await withCommandGate {
       guard profile == .move else {
         throw EasyLinkError.unsupportedCommand(profile)
       }
@@ -207,7 +173,7 @@ public actor EasyLinkClient {
   /// Upload mode stops realtime FEN notifications — call ``enableRealtimeUpdates()``
   /// afterwards to resume the FEN stream.
   public func importOTBGames(timeout: Duration = .seconds(120)) async throws -> [OTBGame] {
-    try await withCommandGate("importOTBGames") {
+    try await withCommandGate {
       try await importOTBGamesLocked(timeout: timeout)
     }
   }
@@ -215,174 +181,84 @@ public actor EasyLinkClient {
   private func importOTBGamesLocked(timeout: Duration) async throws -> [OTBGame] {
     defer { uploadChannel = nil }
 
-    #if DEBUG
-    easyLinkClientLogger.debug("OTB import started timeout=\(String(describing: timeout), privacy: .public)")
-    #endif
-
     var games: [OTBGame] = []
 
     while true {
-      #if DEBUG
-      easyLinkClientLogger.debug("OTB query file count command")
-      #endif
       try await transport.write(ProtocolConstants.queryFilesCount)
       let fileCount = try await nextFileCount(timeout: timeout)
-      #if DEBUG
-      easyLinkClientLogger.debug("OTB file count received count=\(fileCount, privacy: .public)")
-      #endif
       guard fileCount > 0 else {
-        #if DEBUG
-        easyLinkClientLogger.debug("OTB import finished totalGames=\(games.count, privacy: .public)")
-        #endif
         return games
       }
 
       let channel = OTBChannel()
       uploadChannel = channel
-      #if DEBUG
-      easyLinkClientLogger.debug("OTB upload channel installed")
-      #endif
-      #if DEBUG
-      easyLinkClientLogger.debug("OTB enable upload mode")
-      #endif
       try await transport.write(ProtocolConstants.enableUploadMode)
       if let rearmingTransport = transport as? EasyLinkNotificationRearmingTransport {
-        #if DEBUG
-        easyLinkClientLogger.debug("OTB rearm notifications after upload mode")
-        #endif
         await rearmingTransport.rearmNotificationCharacteristics()
       }
       let game = try await importNextOTBGame(from: channel, timeout: timeout)
       games.append(game)
-      #if DEBUG
-      easyLinkClientLogger.debug("OTB game imported index=\(games.count, privacy: .public) positions=\(game.positions.count, privacy: .public)")
-      #endif
       uploadChannel = nil
-      #if DEBUG
-      easyLinkClientLogger.debug("OTB upload channel cleared; marking imported file done")
-      #endif
       try await transport.write(ProtocolConstants.fileImportDone)
     }
   }
 
   private func withCommandGate<T>(
-    _ operationName: String,
     operation: () async throws -> T
   ) async throws -> T {
-    #if DEBUG
-    easyLinkClientLogger.debug("Command gate acquire requested operation=\(operationName, privacy: .public)")
-    #endif
-    await commandGate.acquire(operationName: operationName)
-    #if DEBUG
-    easyLinkClientLogger.debug("Command gate acquired operation=\(operationName, privacy: .public)")
-    #endif
+    await commandGate.acquire()
     do {
       let value = try await operation()
-      await commandGate.release(operationName: operationName)
-      #if DEBUG
-      easyLinkClientLogger.debug("Command gate released operation=\(operationName, privacy: .public)")
-      #endif
+      await commandGate.release()
       return value
     } catch {
-      await commandGate.release(operationName: operationName)
-      #if DEBUG
-      easyLinkClientLogger.debug("Command gate released after error operation=\(operationName, privacy: .public) error=\(String(describing: error), privacy: .public)")
-      #endif
+      await commandGate.release()
       throw error
     }
   }
 
   private func nextFileCount(timeout: Duration) async throws -> Int {
-    #if DEBUG
-    easyLinkClientLogger.debug("OTB waiting for file count response")
-    #endif
     let response = try await responseRouter.wait(
       matching: { bytes in
         bytes.count >= 3 && bytes[0] == 0x32 && bytes[1] == 0x01
       },
       timeout: timeout
     )
-    #if DEBUG
-    easyLinkClientLogger.debug("OTB raw file count response len=\(response.count, privacy: .public) bytes=\(debugHex(response), privacy: .public)")
-    #endif
     return Int(response[2])
   }
 
   private func importNextOTBGame(from channel: OTBChannel, timeout: Duration) async throws -> OTBGame {
-    #if DEBUG
-    easyLinkClientLogger.debug("OTB readyForImport command")
-    #endif
     try await transport.write(ProtocolConstants.readyForImport)
-    #if DEBUG
-    easyLinkClientLogger.debug("OTB startImport command")
-    #endif
     try await transport.write(ProtocolConstants.startImport)
 
     var positions: [String] = []
     var didReceiveStartFlag = false
-    var latestMetadataDescription: String?
     collectLoop: while true {
-      let notification: EasyLinkNotification
-      do {
-        notification = try await nextOTBNotification(
-          from: channel,
-          timeout: timeout,
-          pollResponseCharacteristic: didReceiveStartFlag
-        )
-      } catch {
-        #if DEBUG
-        easyLinkClientLogger.error("OTB wait failed started=\(didReceiveStartFlag, privacy: .public) positions=\(positions.count, privacy: .public) metadata=\((latestMetadataDescription ?? "<none>"), privacy: .public) error=\(String(describing: error), privacy: .public)")
-        #endif
-        throw error
-      }
-      #if DEBUG
-      easyLinkClientLogger.debug("OTB collect notification \(debugDescription(notification), privacy: .public)")
-      #endif
+      let notification = try await nextOTBNotification(
+        from: channel,
+        timeout: timeout,
+        pollResponseCharacteristic: didReceiveStartFlag
+      )
 
       switch notification {
       case let .response(bytes) where isOTBFlag(bytes, marker: 0xBE):
-        #if DEBUG
-        easyLinkClientLogger.debug("OTB start flag received startedBefore=\(didReceiveStartFlag, privacy: .public) positionsBefore=\(positions.count, privacy: .public)")
-        #endif
         if !didReceiveStartFlag {
           positions.removeAll()
           didReceiveStartFlag = true
           if let rearmingTransport = transport as? EasyLinkNotificationRearmingTransport {
-            #if DEBUG
-            easyLinkClientLogger.debug("OTB rearm FEN notification after start flag")
-            #endif
             await rearmingTransport.rearmFENNotificationCharacteristic()
           }
         }
 
       case let .response(bytes) where isOTBFlag(bytes, marker: 0xED):
-        #if DEBUG
-        easyLinkClientLogger.debug("OTB end flag received positions=\(positions.count, privacy: .public)")
-        #endif
         break collectLoop
 
-      case let .response(bytes) where isOTBFileMetadata(bytes):
-        latestMetadataDescription = otbFileMetadataDescription(bytes)
-        #if DEBUG
-        easyLinkClientLogger.debug("OTB file metadata received \(latestMetadataDescription ?? "<unparsed>", privacy: .public)")
-        #endif
-
       case .disconnected:
-        #if DEBUG
-        easyLinkClientLogger.error("OTB disconnected while collecting game")
-        #endif
         throw EasyLinkError.disconnected
 
       default:
         if let placement = placement(from: notification) {
           positions.append(placement)
-          #if DEBUG
-          easyLinkClientLogger.debug("OTB placement appended count=\(positions.count, privacy: .public) placement=\(placement, privacy: .public)")
-          #endif
-        } else {
-          #if DEBUG
-          easyLinkClientLogger.debug("OTB ignored notification \(debugDescription(notification), privacy: .public)")
-          #endif
         }
       }
     }
@@ -420,27 +296,6 @@ public actor EasyLinkClient {
     bytes.count >= 3 && bytes[0] == 0x37 && bytes[1] == 0x01 && bytes[2] == marker
   }
 
-  private nonisolated func isOTBFileMetadata(_ bytes: [UInt8]) -> Bool {
-    bytes.count >= 10 && bytes[0] == 0x36 && bytes[1] == 0x08
-  }
-
-  private nonisolated func otbFileMetadataDescription(_ bytes: [UInt8]) -> String? {
-    guard isOTBFileMetadata(bytes) else { return nil }
-    let byteCount = UInt32(bytes[2]) |
-      (UInt32(bytes[3]) << 8) |
-      (UInt32(bytes[4]) << 16) |
-      (UInt32(bytes[5]) << 24)
-    let token = UInt32(bytes[6]) |
-      (UInt32(bytes[7]) << 8) |
-      (UInt32(bytes[8]) << 16) |
-      (UInt32(bytes[9]) << 24)
-    #if DEBUG
-    return "bytes=\(byteCount) token=0x\(String(format: "%08X", token)) raw=\(debugHex(bytes))"
-    #else
-    return "bytes=\(byteCount) token=\(token)"
-    #endif
-  }
-
   private nonisolated func isPlacementPacket(_ bytes: [UInt8]) -> Bool {
     bytes.count >= 34 && bytes[0] == 0x01
   }
@@ -458,9 +313,6 @@ public actor EasyLinkClient {
 
   private func tryForwardToUploadChannel(_ notification: EasyLinkNotification) async -> Bool {
     guard let channel = uploadChannel else { return false }
-    #if DEBUG
-    easyLinkClientLogger.debug("OTB forwarding notification to upload channel \(debugDescription(notification), privacy: .public)")
-    #endif
     await channel.receive(notification)
     return true
   }
@@ -483,27 +335,14 @@ public actor EasyLinkClient {
 
         switch notification {
         case let .fen(packet):
-          #if DEBUG
-          easyLinkClientLogger.debug("Realtime FEN notification outside OTB len=\(packet.count, privacy: .public) bytes=\(debugHex(packet), privacy: .public)")
-          #endif
           if let placement = try? EasyLinkCodec.decodePlacement(from: packet) {
             fenContinuation.yield(placement)
-          } else {
-            #if DEBUG
-            easyLinkClientLogger.debug("Realtime FEN decode failed outside OTB")
-            #endif
           }
 
         case let .response(response):
-          #if DEBUG
-          easyLinkClientLogger.debug("Routing response outside OTB len=\(response.count, privacy: .public) bytes=\(debugHex(response), privacy: .public)")
-          #endif
           await responseRouter.receive(response)
 
         case .disconnected:
-          #if DEBUG
-          easyLinkClientLogger.debug("Notification task received disconnect")
-          #endif
           return
         }
       }
@@ -521,9 +360,6 @@ private actor OTBChannel {
   private var waiters: [UUID: CheckedContinuation<EasyLinkNotification, Error>] = [:]
 
   func receive(_ notification: EasyLinkNotification) {
-    #if DEBUG
-    easyLinkClientLogger.debug("OTBChannel receive waiters=\(self.waiters.count, privacy: .public) buffer=\(self.buffer.count, privacy: .public) notification=\(debugDescription(notification), privacy: .public)")
-    #endif
     if let (id, waiter) = waiters.first {
       waiters.removeValue(forKey: id)
       waiter.resume(returning: notification)
@@ -534,42 +370,26 @@ private actor OTBChannel {
   }
 
   func next(timeout: Duration) async throws -> EasyLinkNotification {
-    do {
-      return try await withThrowingTaskGroup(of: EasyLinkNotification.self) { group in
-        group.addTask { try await self.nextWaiting() }
-        group.addTask {
-          try await Task.sleep(for: timeout)
-          throw EasyLinkError.timeout
-        }
-        guard let result = try await group.next() else {
-          throw EasyLinkError.timeout
-        }
-        group.cancelAll()
-        #if DEBUG
-        easyLinkClientLogger.debug("OTBChannel next returning \(debugDescription(result), privacy: .public)")
-        #endif
-        return result
+    try await withThrowingTaskGroup(of: EasyLinkNotification.self) { group in
+      group.addTask { try await self.nextWaiting() }
+      group.addTask {
+        try await Task.sleep(for: timeout)
+        throw EasyLinkError.timeout
       }
-    } catch {
-      #if DEBUG
-      easyLinkClientLogger.error("OTBChannel next failed error=\(String(describing: error), privacy: .public) waiters=\(self.waiters.count, privacy: .public) buffer=\(self.buffer.count, privacy: .public)")
-      #endif
-      throw error
+      guard let result = try await group.next() else {
+        throw EasyLinkError.timeout
+      }
+      group.cancelAll()
+      return result
     }
   }
 
   private func nextWaiting() async throws -> EasyLinkNotification {
     if !buffer.isEmpty {
-      #if DEBUG
-      easyLinkClientLogger.debug("OTBChannel nextWaiting using buffered notification bufferBefore=\(self.buffer.count, privacy: .public)")
-      #endif
       return buffer.removeFirst()
     }
 
     let id = UUID()
-    #if DEBUG
-    easyLinkClientLogger.debug("OTBChannel nextWaiting parking waiter id=\(id.uuidString, privacy: .public)")
-    #endif
     return try await withTaskCancellationHandler {
       try await withCheckedThrowingContinuation { continuation in
         waiters[id] = continuation
@@ -580,9 +400,6 @@ private actor OTBChannel {
   }
 
   private func cancelWaiter(id: UUID) {
-    #if DEBUG
-    easyLinkClientLogger.debug("OTBChannel cancel waiter id=\(id.uuidString, privacy: .public)")
-    #endif
     waiters.removeValue(forKey: id)?.resume(throwing: CancellationError())
   }
 }
